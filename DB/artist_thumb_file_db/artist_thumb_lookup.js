@@ -1,0 +1,1 @@
+globalThis.TAG_ASSEMBLER_ARTIST_THUMB_LOOKUP = {};
