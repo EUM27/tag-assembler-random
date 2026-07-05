@@ -1205,6 +1205,35 @@ textarea {
   object-fit: cover;
 }
 
+/* 글 하나에 이미지 여러 장: 카드 내 이미지 넘겨보기 */
+.saved-card-media { position: relative; }
+.saved-card-media .saved-img-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .88);
+  font-size: 13px;
+  cursor: pointer;
+}
+.saved-card-media .saved-img-nav.prev { left: 5px; }
+.saved-card-media .saved-img-nav.next { right: 5px; }
+.saved-card-media .saved-img-count {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .saved-card h3 {
   margin: 0;
   font-size: 15px;
@@ -7189,8 +7218,17 @@ input[type="text"] {
       ? pageItems.map(item => {
           const id = String(item.id || '');
           const selected = savedSelection.has(id);
-          const image = item.image
-            ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || 'saved image')}">`
+          const imgs = Array.isArray(item.images) && item.images.length
+            ? item.images
+            : (item.image ? [item.image] : []);
+          const image = imgs.length
+            ? `<div class="saved-card-media" data-saved-img-index="0">
+                <img src="${escapeHtml(imgs[0])}" alt="${escapeHtml(item.title || 'saved image')}" data-saved-img>
+                ${imgs.length > 1 ? `
+                <button type="button" class="saved-img-nav prev" data-saved-img-nav="-1" title="이전 이미지">&#10094;</button>
+                <button type="button" class="saved-img-nav next" data-saved-img-nav="1" title="다음 이미지">&#10095;</button>
+                <span class="saved-img-count" data-saved-img-count>1/${imgs.length}</span>` : ''}
+              </div>`
             : '<div class="saved-image-placeholder">이미지 없음</div>';
           return `
             <article class="saved-card${selected ? ' selected' : ''}" data-saved-id="${escapeHtml(item.id)}">
@@ -8737,12 +8775,36 @@ input[type="text"] {
       throw new Error('저장할 값이 없습니다.');
     }
     await savedReadyPromise;
-    const title = uniqueSavedCombinationTitle(options.name || item.presetName || '', artistTags);
-    const groups = buildSavedCombinationGroups(artistTags, qualityTags);
     const image = historyDisplaySrc(item);
+    // 같은 프리셋 그림은 글 하나에 이미지 여러 장으로 모은다:
+    // 프리셋명이 같은 기존 보관 항목이 있으면 새 항목을 만들지 않고 그 항목의 images에 추가.
+    const presetKey = String(options.name || item.presetName || '').trim();
+    const existing = presetKey
+      ? state.saved.combinations.find(entry => String(entry?.presetKey || entry?.title || '').trim() === presetKey)
+      : null;
+    if (existing) {
+      if (image) {
+        const currentImages = Array.isArray(existing.images) && existing.images.length
+          ? existing.images
+          : (existing.image ? [existing.image] : []);
+        existing.images = dedupeStrings([...currentImages, image]);
+        if (!existing.image) existing.image = image;
+      }
+      existing.updatedAt = nowText();
+      try {
+        await persistSavedCombinations();
+      } catch (error) {
+        setSavedDirty(true);
+        throw new Error(`보관 저장 실패: ${error.message}`);
+      }
+      return existing.title;
+    }
+    const title = uniqueSavedCombinationTitle(presetKey, artistTags);
+    const groups = buildSavedCombinationGroups(artistTags, qualityTags);
     state.saved.combinations = [{
       id: savedId(),
       title,
+      presetKey,
       createdAt: nowText(),
       updatedAt: '',
       image,
@@ -9347,6 +9409,26 @@ input[type="text"] {
 
   function bindSavedEvents() {
     $('savedList')?.addEventListener('click', async event => {
+      // 이미지 여러 장 넘겨보기 (글 하나에 이미지 여러 장)
+      const nav = event.target.closest('[data-saved-img-nav]');
+      if (nav) {
+        event.stopPropagation();
+        const card = nav.closest('[data-saved-id]');
+        const media = nav.closest('.saved-card-media');
+        const entry = state.saved.combinations.find(x => String(x.id || '') === String(card?.dataset.savedId || ''));
+        const imgs = Array.isArray(entry?.images) && entry.images.length
+          ? entry.images
+          : (entry?.image ? [entry.image] : []);
+        if (media && imgs.length > 1) {
+          const idx = ((Number(media.dataset.savedImgIndex || 0) + Number(nav.dataset.savedImgNav || 0)) % imgs.length + imgs.length) % imgs.length;
+          media.dataset.savedImgIndex = String(idx);
+          const img = media.querySelector('[data-saved-img]');
+          if (img) img.src = imgs[idx];
+          const count = media.querySelector('[data-saved-img-count]');
+          if (count) count.textContent = `${idx + 1}/${imgs.length}`;
+        }
+        return;
+      }
       const button = event.target.closest('button[data-saved-action]');
       if (!button) return;
       const action = button.dataset.savedAction || '';
