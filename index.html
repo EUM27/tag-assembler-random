@@ -1208,6 +1208,9 @@ textarea {
 .saved-card h3 {
   margin: 0;
   font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .saved-card-meta {
@@ -1223,6 +1226,12 @@ textarea {
   word-break: break-word;
   font-family: Consolas, "SFMono-Regular", monospace;
   font-size: 12px;
+}
+
+/* 메인 프롬프트(직계 pre)는 고정 높이로 규격화해 카드 높이가 프롬프트 길이에 따라 튀지 않게 한다. */
+.saved-card > pre {
+  height: 90px;
+  max-height: 90px;
 }
 
 .saved-card-details {
@@ -6154,13 +6163,9 @@ input[type="text"] {
   }
 
   function resolveSavedArtistSource() {
+    // 보관 조합 태그는 오직 사용자가 입력한 값 또는 비움. 조립판 태그와 절대 연계하지 않는다.
     const manual = savedArtistInputTags();
-    if (manual.length) return { source: 'manual', tags: manual };
-    if (savedEditBaseMode !== 'existing') {
-      const board = composedArtistTags();
-      if (board.length) return { source: 'board', tags: board };
-    }
-    return { source: 'empty', tags: [] };
+    return manual.length ? { source: 'manual', tags: manual } : { source: 'empty', tags: [] };
   }
 
   function resolveSavedQualitySource() {
