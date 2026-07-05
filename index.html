@@ -4573,9 +4573,28 @@ input[type="text"] {
       .replace(/'/g, '&#39;');
   }
 
+  // NovelAI 출력은 언더바 대신 공백을 쓴다. danbooru 이모티콘(kaomoji) 태그만 언더바를 보존한다.
+  // 부팅 중(displayTag 경유)에도 호출되므로 TDZ를 피해 var + 지연 초기화한다.
+  var underscoreEmoticonTagsCache = null;
+  function underscoreEmoticonTags() {
+    if (!underscoreEmoticonTagsCache) {
+      underscoreEmoticonTagsCache = new Set([
+        '0_0', '(o)_(o)', '+_+', '+_-', '._.', '<o>_<o>', '<|>_<|>', '=_=', '>_<',
+        '3_3', '6_9', '>_o', '@_@', '^_^', 'o_o', 'u_u', 'x_x', '|_|', '||_||',
+      ]);
+    }
+    return underscoreEmoticonTagsCache;
+  }
+  function spaceifyTagUnderscores(tag) {
+    const raw = String(tag || '');
+    if (!raw.includes('_')) return raw;
+    if (underscoreEmoticonTags().has(raw.trim().toLowerCase())) return raw;
+    return raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   function displayTag(value) {
     const parts = unwrapWeightedTag(value);
-    const inner = String(parts.inner || '').trim();
+    const inner = spaceifyTagUnderscores(String(parts.inner || '').trim());
     return parts.weighted ? `${parts.weight}:: ${inner} ::` : inner;
   }
 
