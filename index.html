@@ -8062,7 +8062,9 @@ input[type="text"] {
         }
       }
       const createdAt = new Date();
-      const historyImageSrc = autoSavedImagePath || await blobToDataUrl(blob);
+      // 히스토리 썸네일은 항상 data URL로 저장한다.
+      // 자동 저장 경로(images/xxx.png)는 로컬 디스크 경로라서 웹 페이지에서 <img src>로 불러올 수 없어(깨진 이미지) 미리보기용으로 쓸 수 없다.
+      const historyImageSrc = await blobToDataUrl(blob);
       try {
         await saveGeneratedHistoryEntry({
           id: globalThis.crypto?.randomUUID?.() || ('generated-' + Date.now()),
@@ -8252,6 +8254,13 @@ input[type="text"] {
     });
   }
 
+  // 히스토리 항목의 표시 가능한 이미지 소스만 반환한다.
+  // 과거 자동 저장 경로(images/xxx.png 등 로컬 디스크 경로)가 저장된 항목은 웹에서 불러올 수 없어(깨진 이미지) 빈 값으로 처리한다.
+  function historyDisplaySrc(item) {
+    const src = String(item?.imageDataUrl || '').trim();
+    return /^(data:|blob:|https?:)/i.test(src) ? src : '';
+  }
+
   async function saveGeneratedHistoryEntry(entry) {
     generatedHistory = [entry, ...generatedHistory].slice(0, 1000);
     await saveGeneratedHistory();
@@ -8311,8 +8320,9 @@ input[type="text"] {
     }
     const id = String(item.id || '');
     historyPreviewId = id;
-    const image = item.imageDataUrl
-      ? '<img src="' + escapeHtml(item.imageDataUrl) + '" alt="generated preview" decoding="async" data-history-gallery="' + escapeHtml(id) + '" title="클릭하면 갤러리로 크게 보기">'
+    const previewSrc = historyDisplaySrc(item);
+    const image = previewSrc
+      ? '<img src="' + escapeHtml(previewSrc) + '" alt="generated preview" decoding="async" data-history-gallery="' + escapeHtml(id) + '" title="클릭하면 갤러리로 크게 보기">'
       : '<div class="generated-history-thumb-placeholder">No Image</div>';
     pane.innerHTML = [
       image,
@@ -8344,8 +8354,9 @@ input[type="text"] {
     grid.innerHTML = generatedHistory.map(item => {
       const id = String(item.id || '');
       const selected = generatedHistorySelection.has(id);
-      const thumb = item.imageDataUrl
-        ? '<img src="' + escapeHtml(item.imageDataUrl) + '" alt="generated history thumbnail" loading="lazy" decoding="async">'
+      const thumbSrc = historyDisplaySrc(item);
+      const thumb = thumbSrc
+        ? '<img src="' + escapeHtml(thumbSrc) + '" alt="generated history thumbnail" loading="lazy" decoding="async">'
         : '<div class="generated-history-thumb-placeholder">No Image</div>';
       return [
         '<article class="generated-history-card' + (selected ? ' selected' : '') + '" data-history-id="' + escapeHtml(id) + '" title="' + escapeHtml(item.presetName || '') + '">',
@@ -8364,11 +8375,12 @@ input[type="text"] {
     const item = generatedHistory[historyGalleryIndex];
     const image = $('historyGalleryImage');
     const empty = $('historyGalleryEmpty');
+    const gallerySrc = historyDisplaySrc(item);
     if (image) {
-      image.src = item?.imageDataUrl || '';
-      image.classList.toggle('hidden', !item?.imageDataUrl);
+      image.src = gallerySrc;
+      image.classList.toggle('hidden', !gallerySrc);
     }
-    if (empty) empty.classList.toggle('hidden', Boolean(item?.imageDataUrl));
+    if (empty) empty.classList.toggle('hidden', Boolean(gallerySrc));
     if ($('historyGalleryCounter')) {
       $('historyGalleryCounter').textContent = `${historyGalleryIndex + 1} / ${total} · ${item?.presetName || ''}`.trim();
     }
@@ -8458,7 +8470,7 @@ input[type="text"] {
     await savedReadyPromise;
     const title = uniqueSavedCombinationTitle(options.name || item.presetName || '', artistTags);
     const groups = buildSavedCombinationGroups(artistTags, qualityTags);
-    const image = String(item.imageDataUrl || '').trim();
+    const image = historyDisplaySrc(item);
     state.saved.combinations = [{
       id: savedId(),
       title,
@@ -9330,8 +9342,9 @@ input[type="text"] {
       const restoreButton = event.target.closest('[data-history-restore]');
       if (restoreButton) {
         const item = generatedHistory.find(entry => entry.id === String(restoreButton.dataset.historyRestore || ''));
-        if (!item?.imageDataUrl) return;
-        setGeneratedImageUrl(item.imageDataUrl);
+        const restoreSrc = historyDisplaySrc(item);
+        if (!restoreSrc) return;
+        setGeneratedImageUrl(restoreSrc);
         setNovelAiStatus('히스토리 이미지 불러옴', 'ok');
         return;
       }
@@ -9355,12 +9368,13 @@ input[type="text"] {
       const downloadButton = event.target.closest('[data-history-download]');
       if (downloadButton) {
         const item = generatedHistory.find(entry => entry.id === String(downloadButton.dataset.historyDownload || ''));
-        if (!item?.imageDataUrl) return;
+        const downloadSrc = historyDisplaySrc(item);
+        if (!downloadSrc) return;
         (async () => {
           const fileName = generatedImageFilename('png');
           if (rootDirHandle) {
             try {
-              const blob = await (await fetch(item.imageDataUrl)).blob();
+              const blob = await (await fetch(downloadSrc)).blob();
               if (await saveBlobToRootImages(blob, fileName)) {
                 showToast(`이미지를 저장했습니다: ${rootDirHandle.name}/${ROOT_IMAGES_DIR_NAME}/${fileName}`);
                 return;
@@ -9370,7 +9384,7 @@ input[type="text"] {
             }
           }
           const anchor = document.createElement('a');
-          anchor.href = item.imageDataUrl;
+          anchor.href = downloadSrc;
           anchor.download = fileName;
           document.body.appendChild(anchor);
           anchor.click();
