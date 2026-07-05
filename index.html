@@ -1977,6 +1977,7 @@ input[type="text"] {
         <div class="panel-meta">
             <span id="generatedHistoryCount">0개</span>
             <span id="historyStorageStatus" class="history-storage-status">저장소 확인 중</span>
+            <select id="historyPresetFilterSelect" title="같은 작가 프리셋으로 생성된 이미지만 모아봅니다"><option value="">전체 프리셋</option></select>
             <label class="select-all-toggle" title="전체 선택/해제"><input id="historySelectAllToggle" type="checkbox">전체 선택</label>
             <label class="select-all-toggle" title="히스토리 삭제 시 작업 폴더 images에 자동 저장된 파일도 함께 삭제"><input id="historyDeleteSavedFilesToggle" type="checkbox">파일도 삭제</label>
             <button id="historyStorageResetBtn" class="danger-inline" type="button" title="생성 히스토리 저장소만 비웁니다">저장소 초기화</button>
@@ -2342,6 +2343,7 @@ input[type="text"] {
   let historyPresetTargetId = '';
   let historyPreviewId = '';
   let historyGalleryIndex = 0;
+  let historyPresetFilterValue = '';
   let historyGalleryWheelAt = 0;
   let autoGenerateRunning = false;
   let autoGenerateStopRequested = false;
@@ -8488,21 +8490,43 @@ input[type="text"] {
     renderGeneratedHistory();
   }
 
+  // 같은 작가 프리셋으로 생성된 이미지만 모아보는 필터. 빈 값이면 전체.
+  function visibleGeneratedHistory() {
+    if (!historyPresetFilterValue) return generatedHistory;
+    return generatedHistory.filter(item => String(item.presetName || '').trim() === historyPresetFilterValue);
+  }
+
+  function updateHistoryPresetFilterOptions() {
+    const select = $('historyPresetFilterSelect');
+    if (!select) return;
+    const names = dedupeStrings(generatedHistory.map(item => String(item.presetName || '').trim()).filter(Boolean));
+    if (historyPresetFilterValue && !names.includes(historyPresetFilterValue)) historyPresetFilterValue = '';
+    select.innerHTML = ['<option value="">전체 프리셋</option>']
+      .concat(names.map(name => '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>'))
+      .join('');
+    select.value = historyPresetFilterValue;
+    select.disabled = !names.length;
+  }
+
   function updateGeneratedHistoryHeaderUi() {
+    const visible = visibleGeneratedHistory();
     const count = $('generatedHistoryCount');
     if (count) {
-      count.textContent = generatedHistorySelection.size
-        ? generatedHistory.length + '개 · 선택 ' + generatedHistorySelection.size + '개'
+      const base = historyPresetFilterValue
+        ? visible.length + '개 / 전체 ' + generatedHistory.length + '개'
         : generatedHistory.length + '개';
+      count.textContent = generatedHistorySelection.size ? base + ' · 선택 ' + generatedHistorySelection.size + '개' : base;
     }
     if ($('historyDeleteSelectedBtn')) $('historyDeleteSelectedBtn').disabled = !generatedHistorySelection.size;
     if ($('historySaveSelectedBtn')) $('historySaveSelectedBtn').disabled = !generatedHistorySelection.size;
     if ($('historyDeleteAllBtn')) $('historyDeleteAllBtn').disabled = !generatedHistory.length;
     const selectAllToggle = $('historySelectAllToggle');
     if (selectAllToggle) {
-      selectAllToggle.disabled = !generatedHistory.length;
-      selectAllToggle.checked = generatedHistory.length > 0 && generatedHistorySelection.size === generatedHistory.length;
-      selectAllToggle.indeterminate = generatedHistorySelection.size > 0 && generatedHistorySelection.size < generatedHistory.length;
+      const visibleIds = visible.map(item => String(item.id || ''));
+      const selectedVisible = visibleIds.filter(id => generatedHistorySelection.has(id)).length;
+      selectAllToggle.disabled = !visibleIds.length;
+      selectAllToggle.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+      selectAllToggle.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
     }
   }
 
@@ -8529,7 +8553,8 @@ input[type="text"] {
   }
 
   function currentHistoryPreviewItem() {
-    return generatedHistory.find(entry => String(entry.id || '') === historyPreviewId) || generatedHistory[0] || null;
+    const visible = visibleGeneratedHistory();
+    return visible.find(entry => String(entry.id || '') === historyPreviewId) || visible[0] || null;
   }
 
   function renderHistoryPreview() {
@@ -8564,16 +8589,20 @@ input[type="text"] {
 
   function renderGeneratedHistory() {
     pruneGeneratedHistorySelection();
+    updateHistoryPresetFilterOptions();
     updateGeneratedHistoryHeaderUi();
     const grid = $('generatedHistoryGrid');
     if (!grid) return;
-    if (!generatedHistory.length) {
-      grid.innerHTML = '<div class="generated-history-thumb-placeholder">비어 있음</div>';
+    const visible = visibleGeneratedHistory();
+    if (!visible.length) {
+      grid.innerHTML = '<div class="generated-history-thumb-placeholder">'
+        + (generatedHistory.length ? '해당 프리셋으로 생성된 이미지가 없습니다.' : '비어 있음')
+        + '</div>';
       historyPreviewId = '';
       renderHistoryPreview();
       return;
     }
-    grid.innerHTML = generatedHistory.map(item => {
+    grid.innerHTML = visible.map(item => {
       const id = String(item.id || '');
       const selected = generatedHistorySelection.has(id);
       const thumbSrc = historyDisplaySrc(item);
@@ -8591,10 +8620,11 @@ input[type="text"] {
   }
 
   function updateHistoryGallery() {
-    const total = generatedHistory.length;
+    const visible = visibleGeneratedHistory();
+    const total = visible.length;
     if (!total) return;
     historyGalleryIndex = ((historyGalleryIndex % total) + total) % total;
-    const item = generatedHistory[historyGalleryIndex];
+    const item = visible[historyGalleryIndex];
     const image = $('historyGalleryImage');
     const empty = $('historyGalleryEmpty');
     const gallerySrc = historyDisplaySrc(item);
@@ -8612,14 +8642,15 @@ input[type="text"] {
   }
 
   function stepHistoryGallery(delta) {
-    if (!generatedHistory.length) return;
+    if (!visibleGeneratedHistory().length) return;
     historyGalleryIndex += delta;
     updateHistoryGallery();
   }
 
   function openHistoryGallery(id) {
-    if (!generatedHistory.length) return;
-    const index = generatedHistory.findIndex(entry => String(entry.id || '') === String(id || ''));
+    const visible = visibleGeneratedHistory();
+    if (!visible.length) return;
+    const index = visible.findIndex(entry => String(entry.id || '') === String(id || ''));
     historyGalleryIndex = index >= 0 ? index : 0;
     updateHistoryGallery();
     const dialog = $('historyGalleryDialog');
@@ -9686,12 +9717,20 @@ input[type="text"] {
     $('generatedHistoryGrid')?.addEventListener('click', handleHistoryActionClick);
     $('historyPreviewPane')?.addEventListener('click', handleHistoryActionClick);
     $('historySelectAllToggle')?.addEventListener('change', event => {
+      const visible = visibleGeneratedHistory();
       if (event.target.checked) {
-        generatedHistory.forEach(item => generatedHistorySelection.add(String(item.id || '')));
+        visible.forEach(item => generatedHistorySelection.add(String(item.id || '')));
+      } else if (historyPresetFilterValue) {
+        visible.forEach(item => generatedHistorySelection.delete(String(item.id || '')));
       } else {
         generatedHistorySelection.clear();
       }
       updateGeneratedHistorySelectionUi();
+    });
+    $('historyPresetFilterSelect')?.addEventListener('change', event => {
+      historyPresetFilterValue = String(event.target.value || '');
+      historyGalleryIndex = 0;
+      renderGeneratedHistory();
     });
     $('historyStorageResetBtn')?.addEventListener('click', async () => {
       if (!confirm('생성 히스토리 저장소를 초기화할까요?\n보관 관리, 설정, 즐겨찾기, 썸네일 DB는 유지됩니다.')) return;
