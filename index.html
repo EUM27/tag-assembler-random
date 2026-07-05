@@ -1031,7 +1031,13 @@ textarea {
   flex-direction: column;
 }
 
-.saved-list-column > h2 { flex: 0 0 auto; margin-bottom: 10px; }
+.saved-list-column > .saved-list-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.saved-list-column > .saved-list-head > h2 { margin: 0; }
+.saved-list-tools { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.saved-list-pager { display: inline-flex; align-items: center; gap: 8px; }
+.saved-list-pager button { min-width: 30px; min-height: 26px; padding: 2px 8px; font-size: 13px; }
+.saved-list-pager button:disabled { opacity: .4; cursor: default; }
+.saved-list-pager #savedListPageInfo { color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
 
 .saved-list-column > .saved-list {
   flex: 1 1 auto;
@@ -1158,6 +1164,7 @@ textarea {
 }
 
 .saved-card {
+  position: relative;
   display: grid;
   gap: 10px;
   border: 1px solid var(--line);
@@ -1165,6 +1172,25 @@ textarea {
   padding: 10px;
   background: #fff;
 }
+
+.saved-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
+.saved-card-select {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .92);
+  cursor: pointer;
+}
+
+.saved-card-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 
 .saved-card img,
 .saved-image-placeholder {
@@ -1945,6 +1971,7 @@ input[type="text"] {
             <label class="select-all-toggle" title="전체 선택/해제"><input id="historySelectAllToggle" type="checkbox">전체 선택</label>
             <label class="select-all-toggle" title="히스토리 삭제 시 작업 폴더 images에 자동 저장된 파일도 함께 삭제"><input id="historyDeleteSavedFilesToggle" type="checkbox">파일도 삭제</label>
             <button id="historyStorageResetBtn" class="danger-inline" type="button" title="생성 히스토리 저장소만 비웁니다">저장소 초기화</button>
+            <button id="historySaveSelectedBtn" type="button" title="선택한 히스토리를 모두 보관함으로 보냅니다">선택 보관함 저장</button>
             <button id="historyDeleteSelectedBtn" class="danger-inline" type="button">선택 삭제</button>
             <button id="historyDeleteAllBtn" class="danger-inline" type="button">전체 삭제</button>
         </div>
@@ -2025,8 +2052,16 @@ input[type="text"] {
             <div class="inline-controls">
               <button id="connectRootDirBtn" type="button" title="이미지는 작업폴더/images에 저장되고, 작가 썸네일 DB는 작업폴더/DB에 등록됩니다">작업 폴더 연결</button>
             </div>
+            <div class="saved-file-head">
+              <b>이미지로 보관 추가</b>
+              <span>여러 장 선택 가능 · 메타데이터 자동 인식</span>
+            </div>
+            <div class="inline-controls">
+              <button id="bulkImportSavedImagesBtn" type="button" title="이미지 파일을 여러 개 골라 각각 보관 카드로 추가합니다">이미지 여러 개 추가</button>
+            </div>
             <input id="savedOpenInput" class="hidden" type="file" accept="application/json,.json">
             <input id="savedCardImageInput" class="hidden" type="file" accept="image/*">
+            <input id="savedBulkImageInput" class="hidden" type="file" accept="image/*" multiple>
           </div>
           <h2 id="savedFormTitle">현재 조합 보관</h2>
           <div class="saved-form">
@@ -2076,7 +2111,18 @@ input[type="text"] {
           </div>
         </section>
         <section class="tool-card saved-list-column">
-          <h2>보관 목록</h2>
+          <div class="saved-list-head">
+            <h2>보관 목록</h2>
+            <div class="saved-list-tools">
+              <label class="select-all-toggle" title="전체 선택/해제"><input id="savedSelectAllToggle" type="checkbox">전체 선택</label>
+              <button id="savedDeleteSelectedBtn" class="danger-inline" type="button">선택 삭제</button>
+              <div id="savedListPager" class="saved-list-pager hidden">
+                <button id="savedListPrevBtn" type="button" title="이전 페이지 (목록 맨 위에서 위로 스크롤)">◀</button>
+                <span id="savedListPageInfo">1 / 1</span>
+                <button id="savedListNextBtn" type="button" title="다음 페이지 (목록 맨 아래에서 아래로 스크롤)">▶</button>
+              </div>
+            </div>
+          </div>
           <div id="savedList" class="saved-list"></div>
         </section>
       </div>
@@ -2264,7 +2310,9 @@ input[type="text"] {
   };
   const TAG_SPLIT_RE = /[,，\n|]+/;
   const WEIGHTED_TAG_RE = /^\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*::\s*(.*?)\s*(?:::\s*)?$/;
-  const NSFW_TAG_RE = /(^|[^a-z0-9])(?:nude|naked|sex|sexual|sexually|breasts?|penis|vagina|vulva|labia|clitor(?:is|al)?|genitals?|anus|anal|cum|pussy|nipple|groin|crotch|pubic|testicles?|scrotum|foreskin|glans|urethra|panties|underwear|bdsm|bondage|rape|molest|futa|erect|erection|ejaculation|oral|areola|cameltoe|bottomless|topless|spread_legs|groping|ass|butt|젖|유두|성기|음부|누드|알몸|섹스|팬티|속옷)([^a-z0-9]|$)/i;
+  // DB의 nsfw 플래그가 불완전(예: fellatio가 nsfw:false)해서 이 정규식이 실질적 방어선이다.
+  // 언더스코어/공백 구분 태그 모두 잡도록 다어절 항목은 [ _]로 연결한다. SFW 모드에선 과필터가 안전하다.
+  const NSFW_TAG_RE = /(^|[^a-z0-9])(?:nude|naked|nsfw|sex|sexual|sexually|intercourse|breasts?|nipples?|areolae?|penis|cock|dick|testicles?|scrotum|foreskin|glans|balls|vagina|vulva|labia|clitor(?:is|al)?|cervix|genitals?|anus|anal|asshole|butthole|cum|semen|precum|smegma|pussy|groin|crotch|pubic|urethra|panties|pantsu|underwear|thong|g[ _-]?string|lingerie|crotchless|pasties|micro[ _]bikini|slingshot[ _]swimsuit|naked[ _](?:apron|ribbon|towel)|see[ _-]?through|no[ _](?:bra|panties|underwear)|clothes[ _]lift|(?:shirt|skirt|dress)[ _]lift|(?:clothing|panties|bikini|swimsuit)[ _]aside|(?:areola|nipple|breast)[ _]slip|downblouse|upskirt|pantyshot|bdsm|bondage|shibari|restrained|ball[ _]gag|rape|molest|futa|erect|erection|ejaculat\w*|oral|fellatio|irrumatio|cunnilingus|paizuri|deep[ _]?throat|blowjob|handjob|footjob|titjob|masturbat\w*|fingering|penetrat\w*|vaginal|gangbang|threesome|foursome|orgy|bukkake|gokkun|creampie|cumshot|facial|doggystyle|cowgirl[ _]position|mating[ _]press|prone[ _]bone|spitroast|double[ _]penetration|tribadism|scissoring|frottage|humping|reverse[ _]cowgirl|cameltoe|bottomless|topless|spread[ _](?:legs|pussy|anus|ass)|groping|presenting|(?:ass|pussy|breast)[ _]focus|clothed[ _]sex|cum[ _](?:on|in|inside)|covered[ _]in[ _]cum|peeing|urination|urine|wetting|scat|censored|uncensored|mosaic[ _]censoring|bar[ _]censor|heart[ _]censor|dildo|vibrator|sex[ _]toys?|butt[ _]?plug|anal[ _]beads|onahole|ahegao|fucked[ _]silly|mind[ _]break|torogao|aroused|horny|lewd|orgasm|ass|butt|buttocks|젖|유두|성기|음부|누드|알몸|섹스|팬티|속옷|자위|성인|후장|보지|자지|사정|정액|삽입|펠라|오랄)([^a-z0-9]|$)/i;
 
   let dataCache = null;
   let lookupCache = null;
@@ -4311,6 +4359,15 @@ input[type="text"] {
     return `${randomArtistWeightValue()}:: ${canonical} ::`;
   }
 
+  // 즐겨찾기 등에서 작가를 조립판에 추가할 때 각자 독립적인 랜덤 가중치를 부여한다.
+  // (풀 재사용 방식과 달리 매번 새로 뽑아 값이 뭉치지 않음 — "가중치 랜덤" 버튼과 동일)
+  function withUniformRandomArtistWeight(value) {
+    const canonical = normalizeArtistCandidateTag(value);
+    if (!canonical) return '';
+    const inner = String(unwrapWeightedTag(canonical).inner || '').trim();
+    return inner ? `${uniformRandomArtistWeightValue()}:: ${inner} ::` : canonical;
+  }
+
   function normalizeArtistCandidateTag(value) {
     const inner = String(unwrapWeightedTag(value).inner || '').trim();
     if (!inner) return '';
@@ -4573,9 +4630,30 @@ input[type="text"] {
       .replace(/'/g, '&#39;');
   }
 
+  // NovelAI 출력은 언더바 대신 공백을 쓴다. danbooru 이모티콘(kaomoji) 태그만 언더바를 보존한다.
+  // 부팅 중(displayTag 경유)에도 호출되므로 TDZ를 피해 var + 지연 초기화한다.
+  var underscoreEmoticonTagsCache = null;
+  function underscoreEmoticonTags() {
+    if (!underscoreEmoticonTagsCache) {
+      underscoreEmoticonTagsCache = new Set([
+        '0_0', '(o)_(o)', '+_+', '+_-', '._.', '<o>_<o>', '<|>_<|>', '=_=', '>_<',
+        '3_3', '6_9', '>_o', '@_@', '^_^', 'o_o', 'u_u', 'x_x', '|_|', '||_||',
+      ]);
+    }
+    return underscoreEmoticonTagsCache;
+  }
+  function spaceifyTagUnderscores(tag) {
+    const raw = String(tag || '');
+    if (!raw.includes('_')) return raw;
+    if (underscoreEmoticonTags().has(raw.trim().toLowerCase())) return raw;
+    return raw.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   function displayTag(value) {
     const parts = unwrapWeightedTag(value);
-    const inner = String(parts.inner || '').trim();
+    const rawInner = String(parts.inner || '').trim();
+    // 작가 태그는 언더바가 식별자의 일부다(gunjyou_00). 공백으로 바꾸면 매칭이 깨지므로 보존한다.
+    const inner = /^artist:/i.test(rawInner) ? rawInner : spaceifyTagUnderscores(rawInner);
     return parts.weighted ? `${parts.weight}:: ${inner} ::` : inner;
   }
 
@@ -4723,7 +4801,7 @@ input[type="text"] {
     const exists = current.some(tag => artistThumbPreferenceKey(tag) === key);
     if (selected && exists) return;
     const next = selected
-      ? [...current, canonical]
+      ? [...current, withUniformRandomArtistWeight(canonical) || canonical]
       : current.filter(tag => artistThumbPreferenceKey(tag) !== key);
     setSectionTags('artist', next);
     saveAppState();
@@ -4736,7 +4814,7 @@ input[type="text"] {
     const keys = new Set(canonicals.map(artistThumbPreferenceKey).filter(Boolean));
     const current = selectedTags('artist');
     const next = selected
-      ? [...current, ...canonicals]
+      ? [...current, ...canonicals.map(tag => withUniformRandomArtistWeight(tag) || tag)]
       : current.filter(tag => !keys.has(artistThumbPreferenceKey(tag)));
     setSectionTags('artist', next);
     saveAppState();
@@ -4817,12 +4895,15 @@ input[type="text"] {
       lastError = error;
       console.warn('Artist thumbnail IndexedDB save failed', error);
     }
+    // localStorage는 작아서 썸네일이 쌓이면 quota를 넘긴다. IndexedDB가 주 저장소이므로
+    // localStorage 백업이 넘치면 스테일 데이터가 남지 않게 키를 지우고 넘어간다.
     try {
       localStorage.setItem(ARTIST_THUMB_CUSTOM_IMAGES_KEY, JSON.stringify(payload));
       persisted = true;
     } catch (error) {
       lastError = error;
       console.warn('Artist thumbnail localStorage save failed', error);
+      try { localStorage.removeItem(ARTIST_THUMB_CUSTOM_IMAGES_KEY); } catch (_) { /* 무시 */ }
     }
     if (!persisted) {
       throw lastError || new Error('작가 썸네일 저장 실패');
@@ -4840,6 +4921,48 @@ input[type="text"] {
     };
   }
 
+  // 작업 폴더가 연결돼 있으면 커스텀 썸네일을 파일-DB에 실제 이미지 파일로 써서 영구 보관한다.
+  // (거대 앱 데이터 JSON에 base64로 넣지 않으므로 크기 한계에 걸리지 않는다. 기존 키는 덮어쓴다.)
+  async function writeCustomThumbToFileDb(artist, image) {
+    const builder = globalThis.ArtistThumbFileDbBuilder;
+    if (!builder || !rootDirHandle) return false;
+    const entry = await builder.recordFromImageValue(artist, image);
+    if (!entry?.key || !entry.image?.path) return false;
+    const dbDir = await resolveWritableArtistThumbDbDirectory();
+    // 1) 이미지 파일 기록
+    await writeFileToDirectoryPath(dbDir, entry.image.path, new Blob([entry.image.bytes], { type: entry.image.type }));
+    // 2) 기존 lookup/index를 씨앗으로 컬렉션 구성 후 해당 키를 강제 덮어쓴다 (addRecord는 기존 키를 건너뛰므로 수동 세팅)
+    const existingLookup = { ...(loadArtistThumbLookup() || {}) };
+    let existingIndexItems = {};
+    try { existingIndexItems = await loadArtistThumbIndex(); } catch (_) { existingIndexItems = {}; }
+    const collections = builder.createFileDbCollections({
+      lookup: existingLookup,
+      index: { schema: builder.SCHEMA, items: existingIndexItems },
+    });
+    const shardPath = builder.shardName(entry.key);
+    collections.lookup[entry.key] = { artist: entry.record.artist, path: entry.record.path };
+    collections.index.items[entry.key] = { artist: entry.record.artist, shard: shardPath };
+    const shardPayload = collections.shards.get(shardPath) || { items: {} };
+    shardPayload.items[entry.key] = entry.record;
+    collections.shards.set(shardPath, shardPayload);
+    // 3) 파일 기록 (touched shard는 디스크 기존 항목과 병합, lookup/index/manifest는 전체 갱신)
+    const files = builder.serializeFileDbCollections(collections, { status: 'ready' });
+    const newShard = files.shards.get(shardPath) || { items: {} };
+    const previousShard = await readJsonFromDirectoryPath(dbDir, shardPath, { items: {} });
+    await writeFileToDirectoryPath(dbDir, shardPath, JSON.stringify({
+      items: { ...(previousShard?.items || {}), ...(newShard.items || {}) },
+    }));
+    await writeFileToDirectoryPath(dbDir, ARTIST_THUMB_INDEX_FILE, files.indexText);
+    await writeFileToDirectoryPath(dbDir, 'artist_thumb_lookup.js', files.lookupText);
+    await writeFileToDirectoryPath(dbDir, 'manifest.json', JSON.stringify(files.manifest, null, 2));
+    // 4) 인메모리 lookup 갱신 (이번 세션에서 즉시 반영)
+    globalThis[ARTIST_THUMB_LOOKUP_GLOBAL_KEY] = files.lookup;
+    artistThumbLookupCache = files.lookup;
+    artistThumbIndexPromise = Promise.resolve(files.index.items || {});
+    artistThumbShardPromises.clear();
+    return true;
+  }
+
   async function setCustomArtistThumbImage(artist, file) {
     const key = artistThumbPreferenceKey(artist);
     if (!key || !file) return;
@@ -4849,11 +4972,23 @@ input[type="text"] {
     }
     const image = await fileToDataUrl(file);
     if (!image.startsWith('data:image/')) throw new Error('이미지 데이터를 읽지 못했습니다.');
+    // IndexedDB에 항상 저장 → 이건 data URL이라 파일 경로와 무관하게 화면에 바로/항상 뜬다 (표시 보장).
     artistThumbCustomImages.set(key, image);
     await saveArtistThumbCustomImages();
-    await persistConnectedAppDataFile();
     renderArtistSidebar();
-    showToast(`${displayTag(artist) || key} 썸네일을 저장했습니다.`);
+    updateArtistThumbDbStatus();
+    let toFile = false;
+    // 작업 폴더가 있으면 파일-DB에도 실제 파일로 추가 백업 (best-effort, IndexedDB는 지우지 않는다).
+    if (rootDirHandle) {
+      try {
+        toFile = await writeCustomThumbToFileDb(artist, image);
+      } catch (error) {
+        console.warn('썸네일 파일-DB 백업 실패(화면 표시는 정상)', error);
+      }
+    }
+    showToast(toFile
+      ? `${displayTag(artist) || key} 썸네일을 저장했습니다. (작업 폴더에도 파일 백업)`
+      : `${displayTag(artist) || key} 썸네일을 저장했습니다.`);
   }
 
   async function loadArtistThumbIndex() {
@@ -5521,7 +5656,8 @@ input[type="text"] {
         .filter(item => includeNsfw() || item.nsfw !== true);
     }
     const manual = sanitizeSectionTags(sectionKey, state.settings.userTags[sectionKey] || [], { manualArtistFallback: sectionKey === 'artist' })
-      .map(tag => ({ tag, section: sectionKey, count: 0, nsfw: false }));
+      .map(tag => ({ tag, section: sectionKey, count: 0, nsfw: isNsfwTag(tag) }))
+      .filter(item => includeNsfw() || item.nsfw !== true);
     const blocked = new Set((activePreset().block || []).map(promptTagIdentity));
     const itemsByKey = new Map();
     const pushCandidate = (item, source) => {
@@ -6250,7 +6386,6 @@ input[type="text"] {
         const db = event.target.result;
         if (!db.objectStoreNames.contains(SAVED_STORE_NAME)) db.createObjectStore(SAVED_STORE_NAME);
         if (!db.objectStoreNames.contains(IMPORTED_THUMB_STORE_NAME)) db.createObjectStore(IMPORTED_THUMB_STORE_NAME);
-        if (db.objectStoreNames.contains('naiaThumbs')) db.deleteObjectStore('naiaThumbs');
       };
       request.onblocked = () => {
         reject(new Error('다른 Tag Assembler 탭이 저장소를 잡고 있습니다. 다른 탭을 닫고 새로고침해 주세요.'));
@@ -6301,10 +6436,16 @@ input[type="text"] {
   }
 
   function saveSavedLocalBackup(items) {
+    // localStorage는 5~10MB로 작다. 원본 이미지(base64)를 넣으면 큰 이미지 2~3장에 꽉 차서
+    // QuotaExceededError가 나고 그 이후 저장이 막힌다. 이미지는 IndexedDB/연결 파일이 보관하므로
+    // localStorage 백업에는 이미지를 빼고 메타데이터만 저장한다.
     try {
-      localStorage.setItem(SAVED_LOCAL_KEY, JSON.stringify(normalizeSavedCombinations(items)));
+      const lite = normalizeSavedCombinations(items).map(item => ({ ...item, image: '', images: [] }));
+      localStorage.setItem(SAVED_LOCAL_KEY, JSON.stringify(lite));
     } catch (error) {
       console.warn('Saved local backup failed', error);
+      // 그래도 넘치면 백업을 비워 다음 저장이 막히지 않게 한다.
+      try { localStorage.removeItem(SAVED_LOCAL_KEY); } catch (_) { /* 무시 */ }
     }
   }
 
@@ -6452,7 +6593,8 @@ input[type="text"] {
       artistPrefs: {
         favorites: [...artistThumbFavorites],
         excluded: [...artistThumbExcluded],
-        favoriteRandomOnly: artistFavoriteRandomOnly,
+        // favoriteRandomOnly는 순수 로컬 UI 토글이므로 공유/복구 JSON에 싣지 않는다.
+        // (임포트 시 사용자가 누르지도 않은 즐겨찾기 전용 랜덤이 켜지는 문제 방지)
       },
     };
   }
@@ -6480,9 +6622,7 @@ input[type="text"] {
       if (Array.isArray(source.artistPrefs.excluded)) {
         artistThumbExcluded = new Set(source.artistPrefs.excluded.map(artistThumbPreferenceKey).filter(Boolean));
       }
-      if (source.artistPrefs.favoriteRandomOnly !== undefined) {
-        artistFavoriteRandomOnly = source.artistPrefs.favoriteRandomOnly === true;
-      }
+      // favoriteRandomOnly는 로컬 UI 토글이라 임포트 JSON에서 읽지 않는다(딸려 켜짐 방지).
       applied.push('즐겨찾기/빼기');
     }
     return applied;
@@ -6814,6 +6954,7 @@ input[type="text"] {
       ...withUniqueSavedIds(imported, state.saved.combinations),
       ...state.saved.combinations,
     ];
+    savedListPage = 0; // 새로 추가된 이미지는 목록 맨 앞이므로 첫 페이지로
     await persistSavedCombinations();
     showToast(`이미지 ${imported.length}개를 보관함에 추가했습니다.`);
   }
@@ -6903,6 +7044,24 @@ input[type="text"] {
     }
   }
 
+  async function deleteSelectedSavedCombinations() {
+    await savedReadyPromise;
+    const ids = new Set(savedSelection);
+    if (!ids.size) return;
+    if (!confirm(`선택한 보관 조합 ${ids.size}개를 삭제할까요?`)) return;
+    const before = state.saved.combinations.length;
+    state.saved.combinations = state.saved.combinations.filter(item => !ids.has(String(item.id || '')));
+    const removed = before - state.saved.combinations.length;
+    savedSelection.clear();
+    try {
+      await persistSavedCombinations();
+      showToast(`보관 조합 ${removed}개를 삭제했습니다.`);
+    } catch (error) {
+      setSavedDirty(true);
+      showToast(`선택 삭제 실패: ${error.message}`);
+    }
+  }
+
   async function clearSavedCombinations() {
     await savedReadyPromise;
     if (!state.saved.combinations.length) return;
@@ -6956,17 +7115,72 @@ input[type="text"] {
       : '<div class="saved-sidebar-thumb-placeholder">보관된 조합이 없습니다.</div>';
   }
 
+  const SAVED_LIST_PAGE_SIZE = 15;
+  let savedListPage = 0;
+  let savedListWheelAt = 0;
+  const savedSelection = new Set();
+
+  function updateSavedSelectionHeaderUi() {
+    const total = state.saved.combinations.length;
+    const validIds = new Set(state.saved.combinations.map(item => String(item.id || '')));
+    [...savedSelection].forEach(id => { if (!validIds.has(id)) savedSelection.delete(id); });
+    if ($('savedCount')) {
+      $('savedCount').textContent = savedSelection.size
+        ? `보관 ${total}개 · 선택 ${savedSelection.size}개`
+        : `보관 ${total}개`;
+    }
+    if ($('savedDeleteSelectedBtn')) $('savedDeleteSelectedBtn').disabled = !savedSelection.size;
+    const toggle = $('savedSelectAllToggle');
+    if (toggle) {
+      toggle.disabled = !total;
+      toggle.checked = total > 0 && savedSelection.size === total;
+      toggle.indeterminate = savedSelection.size > 0 && savedSelection.size < total;
+    }
+  }
+
+  function savedListTotalPages() {
+    return Math.max(1, Math.ceil(state.saved.combinations.length / SAVED_LIST_PAGE_SIZE));
+  }
+
+  function updateSavedListPager() {
+    const total = savedListTotalPages();
+    const pager = $('savedListPager');
+    if (pager) pager.classList.toggle('hidden', state.saved.combinations.length <= SAVED_LIST_PAGE_SIZE);
+    if ($('savedListPageInfo')) $('savedListPageInfo').textContent = `${savedListPage + 1} / ${total}`;
+    if ($('savedListPrevBtn')) $('savedListPrevBtn').disabled = savedListPage <= 0;
+    if ($('savedListNextBtn')) $('savedListNextBtn').disabled = savedListPage >= total - 1;
+  }
+
+  // 페이지 이동: toBottom이면 새 페이지의 맨 아래로 스크롤(이전 페이지로 돌아갈 때 자연스럽게).
+  function goSavedListPage(page, options = {}) {
+    const total = savedListTotalPages();
+    const next = Math.min(Math.max(0, page), total - 1);
+    if (next === savedListPage) return;
+    savedListPage = next;
+    renderSavedManager();
+    const list = $('savedList');
+    if (list) list.scrollTop = options.toBottom ? list.scrollHeight : 0;
+  }
+
   function renderSavedManager() {
-    if ($('savedCount')) $('savedCount').textContent = `보관 ${state.saved.combinations.length}개`;
     const list = $('savedList');
     if (!list) return;
+    // 페이지 클램프 + 현재 페이지 15장만 렌더 (이미지가 커서 전체를 한 번에 그리면 무겁다)
+    savedListPage = Math.min(Math.max(0, savedListPage), savedListTotalPages() - 1);
+    const start = savedListPage * SAVED_LIST_PAGE_SIZE;
+    const pageItems = state.saved.combinations.slice(start, start + SAVED_LIST_PAGE_SIZE);
+    updateSavedListPager();
+    updateSavedSelectionHeaderUi();
     list.innerHTML = state.saved.combinations.length
-      ? state.saved.combinations.map(item => {
+      ? pageItems.map(item => {
+          const id = String(item.id || '');
+          const selected = savedSelection.has(id);
           const image = item.image
             ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || 'saved image')}">`
             : '<div class="saved-image-placeholder">이미지 없음</div>';
           return `
-            <article class="saved-card" data-saved-id="${escapeHtml(item.id)}">
+            <article class="saved-card${selected ? ' selected' : ''}" data-saved-id="${escapeHtml(item.id)}">
+              <label class="saved-card-select"><input type="checkbox" data-saved-select="${escapeHtml(item.id)}"${selected ? ' checked' : ''}></label>
               ${image}
               <div>
                 <h3>${escapeHtml(item.title || '보관 조합')}</h3>
@@ -6999,33 +7213,35 @@ input[type="text"] {
   function applySavedCombinationToBoard(id) {
     const item = state.saved.combinations.find(entry => entry.id === id);
     if (!item) return;
-    let groups = item.groups ? normalizeSavedPromptGroups(item.groups) : emptySectionTagMap();
-    if (!sectionGroupsHaveTags(groups)) {
-      groups = classifyPromptText(item.prompt || '', { preserveUnknownSpacing: true });
+    // 보관 조합은 화풍(작가) 프리셋이다. 조립판에는 작가 태그만 적용하고
+    // 상황/구도/메타/그림체/외형 등 나머지 섹션은 건드리지 않는다.
+    let artistTags = sanitizeSectionTags('artist', item.artistTags || [], { manualArtistFallback: true });
+    if (!artistTags.length && item.groups && Array.isArray(item.groups.artist)) {
+      // artistTags가 비어도 groups.artist에 있으면 거기서 가져온다.
+      artistTags = sanitizeSectionTags('artist', item.groups.artist, { manualArtistFallback: true });
     }
-    const itemArtistTags = sanitizeSectionTags('artist', item.artistTags || [], { manualArtistFallback: true });
-    if (itemArtistTags.length) groups.artist = itemArtistTags;
-    const itemQualityTags = sanitizeSectionTags('quality', item.qualityTags || [], {
-      strict: false,
-      preserveUnknownSpacing: true,
-    });
-    if (itemQualityTags.length) groups.quality = itemQualityTags;
-    if (!sectionGroupsHaveTags(groups)) {
-      showToast('이 보관 조합에서 적용할 태그를 찾지 못했습니다. 조립판은 그대로 둡니다.');
+    if (!artistTags.length) {
+      // 구버전/이미지 메타 저장분: prompt에서 artist: 태그만 추려낸다.
+      const fromPrompt = splitTags(item.prompt || '').filter(raw => isExplicitArtistSyntax(raw));
+      artistTags = sanitizeSectionTags('artist', fromPrompt, { manualArtistFallback: true });
+    }
+    const qualityTags = sanitizeSectionTags('quality', item.qualityTags || [], { strict: false, preserveUnknownSpacing: true });
+    const negative = String(item.negativePrompt || '').trim();
+    if (!artistTags.length && !qualityTags.length && !negative) {
+      showToast('이 보관 조합에서 적용할 작가/퀄리티/네거티브를 찾지 못했습니다.');
       return;
     }
-    for (const section of BOARD_SECTIONS) {
-      if (state.board.locked[section.key]) continue;
-      if (!(groups[section.key] || []).length) continue;
-      replaceSectionTagsPreservingPins(section.key, groups[section.key]);
+    if (artistTags.length && state.board.locked.artist !== true) {
+      replaceSectionTagsPreservingPins('artist', artistTags);
     }
-    if ((groups.quality || []).length && !qualityPromptLocked() && $('novelAiCurrentQualityInput')) $('novelAiCurrentQualityInput').value = formatOutputTags(groups.quality);
-    if (String(item.negativePrompt || '').trim() && !negativePromptLocked() && $('novelAiCurrentNegativeInput')) $('novelAiCurrentNegativeInput').value = item.negativePrompt;
+    // 퀄리티/네거티브는 조립판 섹션이 아니라 프롬프트 입력칸에만 반영 (잠금 시 유지)
+    if (qualityTags.length && !qualityPromptLocked() && $('novelAiCurrentQualityInput')) $('novelAiCurrentQualityInput').value = formatOutputTags(qualityTags);
+    if (negative && !negativePromptLocked() && $('novelAiCurrentNegativeInput')) $('novelAiCurrentNegativeInput').value = negative;
     saveAppState();
     saveNovelAiSettings();
     renderAll();
     activateTab('board');
-    showToast('보관 조합을 조립판에 적용했습니다.');
+    showToast('보관 조합의 작가를 조립판에 적용했습니다.');
   }
 
   async function savePastedUserTags() {
@@ -8062,7 +8278,9 @@ input[type="text"] {
         }
       }
       const createdAt = new Date();
-      const historyImageSrc = autoSavedImagePath || await blobToDataUrl(blob);
+      // 히스토리 썸네일은 항상 data URL로 저장한다.
+      // 자동 저장 경로(images/xxx.png)는 로컬 디스크 경로라서 웹 페이지에서 <img src>로 불러올 수 없어(깨진 이미지) 미리보기용으로 쓸 수 없다.
+      const historyImageSrc = await blobToDataUrl(blob);
       try {
         await saveGeneratedHistoryEntry({
           id: globalThis.crypto?.randomUUID?.() || ('generated-' + Date.now()),
@@ -8252,6 +8470,13 @@ input[type="text"] {
     });
   }
 
+  // 히스토리 항목의 표시 가능한 이미지 소스만 반환한다.
+  // 과거 자동 저장 경로(images/xxx.png 등 로컬 디스크 경로)가 저장된 항목은 웹에서 불러올 수 없어(깨진 이미지) 빈 값으로 처리한다.
+  function historyDisplaySrc(item) {
+    const src = String(item?.imageDataUrl || '').trim();
+    return /^(data:|blob:|https?:)/i.test(src) ? src : '';
+  }
+
   async function saveGeneratedHistoryEntry(entry) {
     generatedHistory = [entry, ...generatedHistory].slice(0, 1000);
     await saveGeneratedHistory();
@@ -8266,6 +8491,7 @@ input[type="text"] {
         : generatedHistory.length + '개';
     }
     if ($('historyDeleteSelectedBtn')) $('historyDeleteSelectedBtn').disabled = !generatedHistorySelection.size;
+    if ($('historySaveSelectedBtn')) $('historySaveSelectedBtn').disabled = !generatedHistorySelection.size;
     if ($('historyDeleteAllBtn')) $('historyDeleteAllBtn').disabled = !generatedHistory.length;
     const selectAllToggle = $('historySelectAllToggle');
     if (selectAllToggle) {
@@ -8311,8 +8537,9 @@ input[type="text"] {
     }
     const id = String(item.id || '');
     historyPreviewId = id;
-    const image = item.imageDataUrl
-      ? '<img src="' + escapeHtml(item.imageDataUrl) + '" alt="generated preview" decoding="async" data-history-gallery="' + escapeHtml(id) + '" title="클릭하면 갤러리로 크게 보기">'
+    const previewSrc = historyDisplaySrc(item);
+    const image = previewSrc
+      ? '<img src="' + escapeHtml(previewSrc) + '" alt="generated preview" decoding="async" data-history-gallery="' + escapeHtml(id) + '" title="클릭하면 갤러리로 크게 보기">'
       : '<div class="generated-history-thumb-placeholder">No Image</div>';
     pane.innerHTML = [
       image,
@@ -8344,8 +8571,9 @@ input[type="text"] {
     grid.innerHTML = generatedHistory.map(item => {
       const id = String(item.id || '');
       const selected = generatedHistorySelection.has(id);
-      const thumb = item.imageDataUrl
-        ? '<img src="' + escapeHtml(item.imageDataUrl) + '" alt="generated history thumbnail" loading="lazy" decoding="async">'
+      const thumbSrc = historyDisplaySrc(item);
+      const thumb = thumbSrc
+        ? '<img src="' + escapeHtml(thumbSrc) + '" alt="generated history thumbnail" loading="lazy" decoding="async">'
         : '<div class="generated-history-thumb-placeholder">No Image</div>';
       return [
         '<article class="generated-history-card' + (selected ? ' selected' : '') + '" data-history-id="' + escapeHtml(id) + '" title="' + escapeHtml(item.presetName || '') + '">',
@@ -8364,11 +8592,12 @@ input[type="text"] {
     const item = generatedHistory[historyGalleryIndex];
     const image = $('historyGalleryImage');
     const empty = $('historyGalleryEmpty');
+    const gallerySrc = historyDisplaySrc(item);
     if (image) {
-      image.src = item?.imageDataUrl || '';
-      image.classList.toggle('hidden', !item?.imageDataUrl);
+      image.src = gallerySrc;
+      image.classList.toggle('hidden', !gallerySrc);
     }
-    if (empty) empty.classList.toggle('hidden', Boolean(item?.imageDataUrl));
+    if (empty) empty.classList.toggle('hidden', Boolean(gallerySrc));
     if ($('historyGalleryCounter')) {
       $('historyGalleryCounter').textContent = `${historyGalleryIndex + 1} / ${total} · ${item?.presetName || ''}`.trim();
     }
@@ -8458,7 +8687,7 @@ input[type="text"] {
     await savedReadyPromise;
     const title = uniqueSavedCombinationTitle(options.name || item.presetName || '', artistTags);
     const groups = buildSavedCombinationGroups(artistTags, qualityTags);
-    const image = String(item.imageDataUrl || '').trim();
+    const image = historyDisplaySrc(item);
     state.saved.combinations = [{
       id: savedId(),
       title,
@@ -8579,6 +8808,28 @@ input[type="text"] {
     } catch (error) {
       showToast(error.message);
     }
+  }
+
+  // 선택한 히스토리 항목들을 한 번에 보관함으로 보낸다.
+  async function saveSelectedHistoryToStorage() {
+    const ids = [...generatedHistorySelection];
+    if (!ids.length) {
+      showToast('보관함으로 보낼 항목을 먼저 선택하세요.');
+      return;
+    }
+    let saved = 0;
+    let skipped = 0;
+    // 최신순(위→아래) 유지를 위해 화면 순서의 역순으로 저장한다.
+    const ordered = generatedHistory.filter(item => generatedHistorySelection.has(String(item.id || '')));
+    for (let i = ordered.length - 1; i >= 0; i -= 1) {
+      try {
+        await saveHistoryItemToStorage(ordered[i]);
+        saved += 1;
+      } catch (_) {
+        skipped += 1;
+      }
+    }
+    showToast(`보관함에 ${saved}개 저장${skipped ? `, ${skipped}개 건너뜀(저장할 값 없음)` : ''}.`);
   }
 
   function historyDeleteSavedFilesEnabled() {
@@ -9063,6 +9314,46 @@ input[type="text"] {
       if (!card) return;
       applySavedCombinationToBoard(card.dataset.savedId || '');
     });
+    $('savedList')?.addEventListener('change', event => {
+      const checkbox = event.target.closest('input[data-saved-select]');
+      if (!checkbox) return;
+      const id = String(checkbox.dataset.savedSelect || '');
+      if (checkbox.checked) savedSelection.add(id);
+      else savedSelection.delete(id);
+      const card = checkbox.closest('.saved-card');
+      if (card) card.classList.toggle('selected', checkbox.checked);
+      updateSavedSelectionHeaderUi();
+    });
+    $('savedSelectAllToggle')?.addEventListener('change', event => {
+      if (event.target.checked) state.saved.combinations.forEach(item => savedSelection.add(String(item.id || '')));
+      else savedSelection.clear();
+      renderSavedManager();
+    });
+    $('savedDeleteSelectedBtn')?.addEventListener('click', () => {
+      deleteSelectedSavedCombinations().catch(error => showToast(error.message));
+    });
+    $('savedListPrevBtn')?.addEventListener('click', () => goSavedListPage(savedListPage - 1, { toBottom: false }));
+    $('savedListNextBtn')?.addEventListener('click', () => goSavedListPage(savedListPage + 1, { toBottom: false }));
+    // 목록 맨 아래에서 더 내리면 다음 페이지, 맨 위에서 더 올리면 이전 페이지 (한 제스처당 한 페이지)
+    $('savedList')?.addEventListener('wheel', event => {
+      const total = savedListTotalPages();
+      if (total <= 1) return;
+      const list = $('savedList');
+      const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 4;
+      const atTop = list.scrollTop <= 4;
+      const now = event.timeStamp || 0;
+      if (event.deltaY > 0 && atBottom && savedListPage < total - 1) {
+        if (now - savedListWheelAt < 350) { event.preventDefault(); return; }
+        savedListWheelAt = now;
+        event.preventDefault();
+        goSavedListPage(savedListPage + 1, { toBottom: false });
+      } else if (event.deltaY < 0 && atTop && savedListPage > 0) {
+        if (now - savedListWheelAt < 350) { event.preventDefault(); return; }
+        savedListWheelAt = now;
+        event.preventDefault();
+        goSavedListPage(savedListPage - 1, { toBottom: true });
+      }
+    }, { passive: false });
   }
 
   function bindArtistThumbEvents() {
@@ -9330,8 +9621,9 @@ input[type="text"] {
       const restoreButton = event.target.closest('[data-history-restore]');
       if (restoreButton) {
         const item = generatedHistory.find(entry => entry.id === String(restoreButton.dataset.historyRestore || ''));
-        if (!item?.imageDataUrl) return;
-        setGeneratedImageUrl(item.imageDataUrl);
+        const restoreSrc = historyDisplaySrc(item);
+        if (!restoreSrc) return;
+        setGeneratedImageUrl(restoreSrc);
         setNovelAiStatus('히스토리 이미지 불러옴', 'ok');
         return;
       }
@@ -9355,12 +9647,13 @@ input[type="text"] {
       const downloadButton = event.target.closest('[data-history-download]');
       if (downloadButton) {
         const item = generatedHistory.find(entry => entry.id === String(downloadButton.dataset.historyDownload || ''));
-        if (!item?.imageDataUrl) return;
+        const downloadSrc = historyDisplaySrc(item);
+        if (!downloadSrc) return;
         (async () => {
           const fileName = generatedImageFilename('png');
           if (rootDirHandle) {
             try {
-              const blob = await (await fetch(item.imageDataUrl)).blob();
+              const blob = await (await fetch(downloadSrc)).blob();
               if (await saveBlobToRootImages(blob, fileName)) {
                 showToast(`이미지를 저장했습니다: ${rootDirHandle.name}/${ROOT_IMAGES_DIR_NAME}/${fileName}`);
                 return;
@@ -9370,7 +9663,7 @@ input[type="text"] {
             }
           }
           const anchor = document.createElement('a');
-          anchor.href = item.imageDataUrl;
+          anchor.href = downloadSrc;
           anchor.download = fileName;
           document.body.appendChild(anchor);
           anchor.click();
@@ -9403,6 +9696,9 @@ input[type="text"] {
         console.warn('Generated history storage reset failed', error);
         showToast(`히스토리 저장소 초기화 실패: ${error.message}`);
       }
+    });
+    $('historySaveSelectedBtn')?.addEventListener('click', () => {
+      saveSelectedHistoryToStorage().catch(error => showToast(error.message));
     });
     $('historyDeleteSelectedBtn')?.addEventListener('click', async () => {
       const count = generatedHistorySelection.size;
