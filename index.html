@@ -1405,6 +1405,13 @@ textarea {
   outline-offset: -2px;
 }
 
+/* 미리보기 중인 이미지와 작가명이 50% 이상 겹치는 이미지 강조 (프리셋 겹침과 구분되는 금색 점선) */
+.generated-history-card.artist-mate {
+  border-color: #e4b100;
+  outline: 2px dotted #e4b100;
+  outline-offset: -2px;
+}
+
 .generated-history-select {
   position: absolute;
   top: 4px;
@@ -8634,10 +8641,25 @@ input[type="text"] {
           .filter(entry => String(entry.presetName || '').trim() === presetName)
           .map(entry => String(entry.id || ''))
       : []);
+    // 작가명이 50% 이상 겹치는 이미지도 표시한다 (가중치 무시, 작가 identity 기준).
+    const baseArtists = new Set(historyEntryArtistTags(item).map(identityKey).filter(Boolean));
+    const artistMateIds = new Set();
+    if (baseArtists.size) {
+      generatedHistory.forEach(entry => {
+        const entryId = String(entry.id || '');
+        if (entryId === id || mateIds.has(entryId)) return;
+        const artists = new Set(historyEntryArtistTags(entry).map(identityKey).filter(Boolean));
+        if (!artists.size) return;
+        let shared = 0;
+        artists.forEach(key => { if (baseArtists.has(key)) shared += 1; });
+        if (shared / Math.min(baseArtists.size, artists.size) >= 0.5) artistMateIds.add(entryId);
+      });
+    }
     grid?.querySelectorAll('[data-history-id]').forEach(card => {
       const cardId = String(card.dataset.historyId || '');
       card.classList.toggle('previewing', cardId === id);
       card.classList.toggle('preset-mate', cardId !== id && mateIds.has(cardId));
+      card.classList.toggle('artist-mate', artistMateIds.has(cardId));
     });
   }
 
