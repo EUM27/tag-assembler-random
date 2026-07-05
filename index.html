@@ -1369,6 +1369,13 @@ textarea {
   outline-offset: -2px;
 }
 
+/* 미리보기 중인 이미지와 같은 프리셋으로 생성된 나머지 이미지 강조 */
+.generated-history-card.preset-mate {
+  border-color: var(--accent);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
 .generated-history-select {
   position: absolute;
   top: 4px;
@@ -8582,8 +8589,17 @@ input[type="text"] {
       '<pre class="history-preview-prompt">' + escapeHtml(item.prompt || '') + '</pre>',
     ].join('');
     const grid = $('generatedHistoryGrid');
+    // 클릭(미리보기)한 이미지와 같은 프리셋으로 생성된 나머지 이미지도 외곽선으로 티나게 표시한다.
+    const presetName = String(item.presetName || '').trim();
+    const mateIds = new Set(presetName
+      ? generatedHistory
+          .filter(entry => String(entry.presetName || '').trim() === presetName)
+          .map(entry => String(entry.id || ''))
+      : []);
     grid?.querySelectorAll('[data-history-id]').forEach(card => {
-      card.classList.toggle('previewing', String(card.dataset.historyId || '') === id);
+      const cardId = String(card.dataset.historyId || '');
+      card.classList.toggle('previewing', cardId === id);
+      card.classList.toggle('preset-mate', cardId !== id && mateIds.has(cardId));
     });
   }
 
