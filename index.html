@@ -1233,6 +1233,21 @@ textarea {
   font-size: 11px;
   font-weight: 800;
 }
+.saved-card-media .saved-img-delete {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .9);
+  color: #b3261e;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
 
 .saved-card h3 {
   margin: 0;
@@ -7342,6 +7357,7 @@ input[type="text"] {
           const image = imgs.length
             ? `<div class="saved-card-media" data-saved-img-index="0">
                 <img src="${escapeHtml(imgs[0])}" alt="${escapeHtml(item.title || 'saved image')}" data-saved-img>
+                <button type="button" class="saved-img-delete" data-saved-img-delete title="현재 이미지 삭제">×</button>
                 ${imgs.length > 1 ? `
                 <button type="button" class="saved-img-nav prev" data-saved-img-nav="-1" title="이전 이미지">&#10094;</button>
                 <button type="button" class="saved-img-nav next" data-saved-img-nav="1" title="다음 이미지">&#10095;</button>
@@ -8451,27 +8467,32 @@ input[type="text"] {
       // 히스토리 썸네일은 항상 data URL로 저장한다.
       // 자동 저장 경로(images/xxx.png)는 로컬 디스크 경로라서 웹 페이지에서 <img src>로 불러올 수 없어(깨진 이미지) 미리보기용으로 쓸 수 없다.
       const historyImageSrc = await blobToDataUrl(blob);
+      const historyEntry = {
+        id: globalThis.crypto?.randomUUID?.() || ('generated-' + Date.now()),
+        imageDataUrl: historyImageSrc,
+        autoSavedImagePath,
+        prompt,
+        negativePrompt,
+        artistTags: splitTags(prompt).filter(raw => isExplicitArtistSyntax(raw)),
+        qualityPrompt: String($('novelAiCurrentQualityInput')?.value || '').trim(),
+        presetName: String(options.historyMeta?.presetName || state.presets.activeName || ''),
+        iteration: Number(options.historyMeta?.iteration || 0) || 0,
+        total: Number(options.historyMeta?.total || 0) || 0,
+        createdAt: createdAt.toISOString(),
+        createdAtLabel: createdAt.toLocaleString('ko-KR'),
+        width: settings.width,
+        model: settings.model,
+        seed: settings.seed,
+      };
       try {
-        await saveGeneratedHistoryEntry({
-          id: globalThis.crypto?.randomUUID?.() || ('generated-' + Date.now()),
-          imageDataUrl: historyImageSrc,
-          autoSavedImagePath,
-          prompt,
-          negativePrompt,
-          artistTags: splitTags(prompt).filter(raw => isExplicitArtistSyntax(raw)),
-          qualityPrompt: String($('novelAiCurrentQualityInput')?.value || '').trim(),
-          presetName: String(options.historyMeta?.presetName || state.presets.activeName || ''),
-          iteration: Number(options.historyMeta?.iteration || 0) || 0,
-          total: Number(options.historyMeta?.total || 0) || 0,
-          createdAt: createdAt.toISOString(),
-          createdAtLabel: createdAt.toLocaleString('ko-KR'),
-          width: settings.width,
-          model: settings.model,
-          seed: settings.seed,
-        });
+        await saveGeneratedHistoryEntry(historyEntry);
       } catch (error) {
         console.warn('이미지 생성 히스토리 저장 실패', error);
         showToast('이미지는 생성됐지만 히스토리 저장에 실패했습니다.');
+      }
+      // 프리셋으로 생성된 이미지는 사용자가 추가하지 않아도 보관함 같은 프리셋 글에 자동 저장한다.
+      if (String(historyEntry.presetName || '').trim()) {
+        saveHistoryItemToStorage(historyEntry).catch(error => console.warn('보관함 자동 저장 실패', error));
       }
       setNovelAiStatus('이미지 생성 완료', 'ok');
       showToast('이미지 생성 완료');
@@ -9703,6 +9724,35 @@ input[type="text"] {
 
   function bindSavedEvents() {
     $('savedList')?.addEventListener('click', async event => {
+      // 글 안의 현재 이미지 삭제 (자동 저장된 이미지도 개별 삭제 가능)
+      const imgDelete = event.target.closest('[data-saved-img-delete]');
+      if (imgDelete) {
+        event.stopPropagation();
+        const card = imgDelete.closest('[data-saved-id]');
+        const media = imgDelete.closest('.saved-card-media');
+        const entry = state.saved.combinations.find(x => String(x.id || '') === String(card?.dataset.savedId || ''));
+        if (!entry || !media) return;
+        const imgs = Array.isArray(entry.images) && entry.images.length
+          ? [...entry.images]
+          : (entry.image ? [entry.image] : []);
+        if (!imgs.length) return;
+        if (!confirm('이 이미지를 글에서 삭제할까요?')) return;
+        const idx = Math.min(Number(media.dataset.savedImgIndex || 0), imgs.length - 1);
+        imgs.splice(idx, 1);
+        entry.images = imgs;
+        entry.image = imgs[0] || '';
+        entry.updatedAt = nowText();
+        try {
+          await persistSavedCombinations();
+        } catch (error) {
+          setSavedDirty(true);
+          showToast(`이미지 삭제 저장 실패: ${error.message}`);
+          return;
+        }
+        renderSavedManager();
+        showToast('이미지를 삭제했습니다.');
+        return;
+      }
       // 이미지 여러 장 넘겨보기 (글 하나에 이미지 여러 장)
       const nav = event.target.closest('[data-saved-img-nav]');
       if (nav) {
