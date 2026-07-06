@@ -2267,6 +2267,7 @@ input[type="text"] {
   const SAVED_STORE_NAME = 'kv';
   const IMPORTED_THUMB_STORE_NAME = 'importedThumbs';
   const HISTORY_STORE_NAME = 'generatedHistoryItems_v1';
+  const HEART_TALLY_KEY = 'TAG_ASSEMBLER_REBUILD_HEART_TALLY_V1';
   const SAVED_ITEMS_KEY = 'savedCombinations';
   const SAVED_HANDLE_KEY = 'savedFileHandle';
   const ROOT_DIR_HANDLE_KEY = 'rootDirectoryHandle';
@@ -2423,6 +2424,7 @@ input[type="text"] {
   let historyPreviewId = '';
   let historyGalleryIndex = 0;
   let historyPresetFilterValue = '';
+  let heartTally = null; // 영구 누적 하트 집계 {presets:{}, artists:{}}
   let historyGalleryWheelAt = 0;
   let autoGenerateRunning = false;
   let autoGenerateStopRequested = false;
@@ -8646,6 +8648,8 @@ input[type="text"] {
       if (!Number(item.seq)) item.seq = 0 - index;
     });
     generatedHistory.sort((left, right) => Number(right.seq || 0) - Number(left.seq || 0));
+    // 집계 도입 전 하트를 영구 누적으로 1회 이전 (이후에는 토글 때마다 ±1)
+    seedHeartTallyIfNeeded();
     updateGeneratedHistoryStorageStatus().catch(error => console.warn('Generated history status refresh failed', error));
   }
 
@@ -8700,18 +8704,57 @@ input[type="text"] {
     renderGeneratedHistory();
   }
 
-  // 하트(선호도) 통계: 하트된 이미지 수를 프리셋/작가별로 집계한다.
-  function historyHeartStats() {
-    const presets = new Map();
-    const artists = new Map();
+  // 하트 집계는 영구 누적이다: 그림이 지워져도 프리셋/작가의 하트 수는 유지된다.
+  // (하트 켜면 +1, 직접 끄면 -1. 이미지 삭제/저장소 초기화는 집계에 영향 없음)
+  function loadHeartTallyFromStorage() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(HEART_TALLY_KEY) || 'null');
+      if (raw && typeof raw === 'object') {
+        return { presets: { ...(raw.presets || {}) }, artists: { ...(raw.artists || {}) } };
+      }
+    } catch (_) { /* 무시 */ }
+    return null;
+  }
+
+  function saveHeartTally() {
+    if (!heartTally) return;
+    try { localStorage.setItem(HEART_TALLY_KEY, JSON.stringify(heartTally)); } catch (error) { console.warn('Heart tally save failed', error); }
+  }
+
+  function ensureHeartTally() {
+    if (!heartTally) heartTally = loadHeartTallyFromStorage() || { presets: {}, artists: {} };
+    return heartTally;
+  }
+
+  // 최초 1회: 기존 하트(집계 도입 전)를 누적 집계로 옮긴다.
+  function seedHeartTallyIfNeeded() {
+    if (localStorage.getItem(HEART_TALLY_KEY) !== null) {
+      ensureHeartTally();
+      return;
+    }
+    heartTally = { presets: {}, artists: {} };
     generatedHistory.forEach(item => {
-      if (item?.liked !== true) return;
-      const preset = String(item.presetName || '').trim();
-      if (preset) presets.set(preset, (presets.get(preset) || 0) + 1);
-      dedupeStrings(historyEntryArtistTags(item).map(identityKey).filter(Boolean))
-        .forEach(key => artists.set(key, (artists.get(key) || 0) + 1));
+      if (item?.liked === true) applyHeartTallyDelta(item, 1, { skipSave: true });
     });
-    return { presets, artists };
+    saveHeartTally();
+  }
+
+  function applyHeartTallyDelta(item, delta, options = {}) {
+    const tally = ensureHeartTally();
+    const preset = String(item?.presetName || '').trim();
+    if (preset) tally.presets[preset] = Math.max(0, (tally.presets[preset] || 0) + delta);
+    dedupeStrings(historyEntryArtistTags(item).map(identityKey).filter(Boolean))
+      .forEach(key => { tally.artists[key] = Math.max(0, (tally.artists[key] || 0) + delta); });
+    if (options.skipSave !== true) saveHeartTally();
+  }
+
+  // 하트(선호도) 통계: 영구 누적 집계 기준.
+  function historyHeartStats() {
+    const tally = ensureHeartTally();
+    return {
+      presets: new Map(Object.entries(tally.presets)),
+      artists: new Map(Object.entries(tally.artists)),
+    };
   }
 
   // 하트 수 → 별점 (1개:★ 3개:★★ 5개:★★★ 10개:★★★★ 20개:★★★★★)
@@ -8729,6 +8772,7 @@ input[type="text"] {
     const item = generatedHistory.find(entry => String(entry.id || '') === String(id || ''));
     if (!item) return;
     item.liked = item.liked !== true;
+    applyHeartTallyDelta(item, item.liked === true ? 1 : -1);
     saveGeneratedHistoryItem(item);
     document.querySelectorAll(`[data-history-like="${CSS.escape(String(id))}"]`).forEach(button => {
       button.classList.toggle('liked', item.liked === true);
