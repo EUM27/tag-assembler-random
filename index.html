@@ -4489,29 +4489,19 @@ input[type="text"] {
   }
 
   // 작가 칩의 가중치를 사용자가 직접 입력해 수정한다. 빈 값을 입력하면 가중치를 제거한다.
+  // 입력값은 판단/보정 없이 그대로 쓴다. 핀 목록은 건드리지 않는다.
   function editArtistTagWeight(tag) {
     const parts = unwrapWeightedTag(tag);
     const inner = String(parts.inner || '').trim();
     if (!inner) return;
     const current = parts.weighted ? String(parts.weight) : '';
-    const raw = prompt(`"${displayTag(inner)}" 가중치 입력 (예: 1.3 · 비우면 가중치 제거)`, current);
+    const raw = prompt(`"${displayTag(inner)}" 가중치 입력 (비우면 가중치 제거)`, current);
     if (raw === null) return;
-    const text = String(raw).trim().replace(',', '.');
-    let next;
-    if (!text) {
-      next = inner;
-    } else {
-      const value = Number(text);
-      if (!Number.isFinite(value) || value <= 0) {
-        showToast('가중치는 0보다 큰 숫자여야 합니다.');
-        return;
-      }
-      next = `${formatArtistWeightValue(value)}:: ${inner} ::`;
-    }
+    const text = String(raw).trim();
+    const next = text ? `${text}:: ${inner} ::` : inner;
     const identity = promptTagIdentity(tag);
-    const replaceIn = list => (list || []).map(item => promptTagIdentity(item) === identity ? next : item);
-    state.board.selected.artist = replaceIn(state.board.selected.artist);
-    state.board.pinned.artist = replaceIn(state.board.pinned.artist);
+    state.board.selected.artist = (state.board.selected.artist || [])
+      .map(item => promptTagIdentity(item) === identity ? next : item);
     saveAppState();
     renderAll();
   }
