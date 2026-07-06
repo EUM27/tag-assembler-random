@@ -1423,6 +1423,30 @@ textarea {
 }
 .generated-history-grid [data-history-id] { transition: opacity .15s ease; }
 
+/* 하트(선호도) 버튼 — 카드 우상단 */
+.history-like {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .92);
+  color: #98a2b3;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.history-like.liked { color: #e0245e; border-color: #e0245e; }
+.history-like-inline.liked { color: #e0245e; border-color: #e0245e; font-weight: 800; }
+
+/* 하트 수 기반 별점 */
+.heart-stars { color: #e4b100; font-weight: 900; letter-spacing: 1px; }
+.heart-stars-line { color: #8a6300; font-size: 12px; font-weight: 700; }
+
 .generated-history-select {
   position: absolute;
   top: 4px;
@@ -4464,6 +4488,34 @@ input[type="text"] {
     showToast('작가 가중치를 다시 뽑았습니다.');
   }
 
+  // 작가 칩의 가중치를 사용자가 직접 입력해 수정한다. 빈 값을 입력하면 가중치를 제거한다.
+  function editArtistTagWeight(tag) {
+    const parts = unwrapWeightedTag(tag);
+    const inner = String(parts.inner || '').trim();
+    if (!inner) return;
+    const current = parts.weighted ? String(parts.weight) : '';
+    const raw = prompt(`"${displayTag(inner)}" 가중치 입력 (예: 1.3 · 비우면 가중치 제거)`, current);
+    if (raw === null) return;
+    const text = String(raw).trim().replace(',', '.');
+    let next;
+    if (!text) {
+      next = inner;
+    } else {
+      const value = Number(text);
+      if (!Number.isFinite(value) || value <= 0) {
+        showToast('가중치는 0보다 큰 숫자여야 합니다.');
+        return;
+      }
+      next = `${formatArtistWeightValue(value)}:: ${inner} ::`;
+    }
+    const identity = promptTagIdentity(tag);
+    const replaceIn = list => (list || []).map(item => promptTagIdentity(item) === identity ? next : item);
+    state.board.selected.artist = replaceIn(state.board.selected.artist);
+    state.board.pinned.artist = replaceIn(state.board.pinned.artist);
+    saveAppState();
+    renderAll();
+  }
+
   function randomWeightedArtistTag(value) {
     const canonical = normalizeArtistCandidateTag(value);
     if (!canonical) return '';
@@ -6012,6 +6064,7 @@ input[type="text"] {
     return `
       <span class="tag-chip${pinned ? ' tag-chip-pinned' : ''}">
         <span>${escapeHtml(displayTag(tag))}</span>
+        ${sectionKey === 'artist' ? `<button class="tag-chip-pin tag-chip-weight" type="button" data-chip-action="weight" data-section="artist" data-tag="${escapeHtml(tag)}" title="가중치 직접 수정">가중치</button>` : ''}
         <button class="tag-chip-pin" type="button" data-chip-action="pin" data-section="${escapeHtml(sectionKey)}" data-tag="${escapeHtml(tag)}">핀</button>
         <button class="tag-chip-remove" type="button" data-chip-action="remove" data-section="${escapeHtml(sectionKey)}" data-tag="${escapeHtml(tag)}">×</button>
       </span>
@@ -6115,8 +6168,10 @@ input[type="text"] {
         : '<div class="artist-thumb-empty">선택된 작가가 없습니다.</div>';
       return;
     }
+    const sidebarHeartStats = historyHeartStats();
     const cardHtml = (tag, thumb = null) => {
       const label = displayTag(tag);
+      const heartStars = starsForHeartCount(sidebarHeartStats.artists.get(identityKey(tag)) || 0);
       const favorite = hasArtistFavorite(tag);
       const excluded = hasArtistExcluded(tag);
       const selected = hasArtistSelectedInSidebar(tag);
@@ -6133,7 +6188,7 @@ input[type="text"] {
             <div class="artist-thumb-card-head">
               <label class="artist-thumb-select-toggle">
                 <input type="checkbox" data-artist-thumb-select="${escapeHtml(tag)}"${selected ? ' checked' : ''}>
-                <span>${escapeHtml(label)}</span>
+                <span>${escapeHtml(label)}${heartStars ? ` <span class="heart-stars">${heartStars}</span>` : ''}</span>
               </label>
             </div>
           </article>
@@ -8553,6 +8608,45 @@ input[type="text"] {
     renderGeneratedHistory();
   }
 
+  // 하트(선호도) 통계: 하트된 이미지 수를 프리셋/작가별로 집계한다.
+  function historyHeartStats() {
+    const presets = new Map();
+    const artists = new Map();
+    generatedHistory.forEach(item => {
+      if (item?.liked !== true) return;
+      const preset = String(item.presetName || '').trim();
+      if (preset) presets.set(preset, (presets.get(preset) || 0) + 1);
+      dedupeStrings(historyEntryArtistTags(item).map(identityKey).filter(Boolean))
+        .forEach(key => artists.set(key, (artists.get(key) || 0) + 1));
+    });
+    return { presets, artists };
+  }
+
+  // 하트 수 → 별점 (1개:★ 3개:★★ 5개:★★★ 10개:★★★★ 20개:★★★★★)
+  function starsForHeartCount(count) {
+    if (count >= 20) return '★★★★★';
+    if (count >= 10) return '★★★★';
+    if (count >= 5) return '★★★';
+    if (count >= 3) return '★★';
+    if (count >= 1) return '★';
+    return '';
+  }
+
+  // 하트 토글: 히스토리 항목 선호도 표시/해제 후 별점 표시를 갱신한다.
+  function toggleHistoryLiked(id) {
+    const item = generatedHistory.find(entry => String(entry.id || '') === String(id || ''));
+    if (!item) return;
+    item.liked = item.liked !== true;
+    saveGeneratedHistory().catch(error => console.warn('History like save failed', error));
+    document.querySelectorAll(`[data-history-like="${CSS.escape(String(id))}"]`).forEach(button => {
+      button.classList.toggle('liked', item.liked === true);
+      button.textContent = item.liked === true ? '♥' : '♡';
+    });
+    updateHistoryPresetFilterOptions();
+    renderHistoryPreview();
+    renderArtistSidebar();
+  }
+
   // 같은 작가 프리셋으로 생성된 이미지만 모아보는 필터. 빈 값이면 전체.
   function visibleGeneratedHistory() {
     if (!historyPresetFilterValue) return generatedHistory;
@@ -8564,8 +8658,12 @@ input[type="text"] {
     if (!select) return;
     const names = dedupeStrings(generatedHistory.map(item => String(item.presetName || '').trim()).filter(Boolean));
     if (historyPresetFilterValue && !names.includes(historyPresetFilterValue)) historyPresetFilterValue = '';
+    const heartStats = historyHeartStats();
     select.innerHTML = ['<option value="">전체 프리셋</option>']
-      .concat(names.map(name => '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>'))
+      .concat(names.map(name => {
+        const stars = starsForHeartCount(heartStats.presets.get(name) || 0);
+        return '<option value="' + escapeHtml(name) + '">' + escapeHtml(stars ? `${name} ${stars}` : name) + '</option>';
+      }))
       .join('');
     select.value = historyPresetFilterValue;
     select.disabled = !names.length;
@@ -8635,10 +8733,24 @@ input[type="text"] {
     const image = previewSrc
       ? '<img src="' + escapeHtml(previewSrc) + '" alt="generated preview" decoding="async" data-history-gallery="' + escapeHtml(id) + '" title="클릭하면 갤러리로 크게 보기">'
       : '<div class="generated-history-thumb-placeholder">No Image</div>';
+    const heartStats = historyHeartStats();
+    const presetStars = starsForHeartCount(heartStats.presets.get(String(item.presetName || '').trim()) || 0);
+    const artistStarsLine = dedupeStrings(historyEntryArtistTags(item))
+      .map(tag => {
+        const stars = starsForHeartCount(heartStats.artists.get(identityKey(tag)) || 0);
+        // 별점 줄에는 가중치를 빼고 작가명만 표시한다.
+        const name = String(unwrapWeightedTag(tag).inner || '').trim();
+        return stars && name ? `${name} ${stars}` : '';
+      })
+      .filter(Boolean)
+      .join(' · ');
     pane.innerHTML = [
       image,
-      '<div class="generated-history-meta"><b>' + escapeHtml(item.presetName || '프리셋 없음') + '</b><span>' + escapeHtml(item.createdAtLabel || '') + '</span></div>',
+      '<div class="generated-history-meta"><b>' + escapeHtml(item.presetName || '프리셋 없음')
+        + (presetStars ? ' <span class="heart-stars">' + presetStars + '</span>' : '') + '</b><span>' + escapeHtml(item.createdAtLabel || '') + '</span></div>',
+      artistStarsLine ? '<div class="generated-history-meta heart-stars-line">' + escapeHtml(artistStarsLine) + '</div>' : '',
       '<div class="generated-history-actions">'
+        + '<button class="history-like-inline' + (item.liked === true ? ' liked' : '') + '" type="button" data-history-like="' + escapeHtml(id) + '">' + (item.liked === true ? '♥ 하트됨' : '♡ 하트') + '</button>'
         + '<button type="button" data-history-download="' + escapeHtml(id) + '">다운로드</button>'
         + '<button type="button" data-history-preset="' + escapeHtml(id) + '">보관 저장</button>'
         + '<button class="danger-inline" type="button" data-history-delete="' + escapeHtml(id) + '">삭제</button>'
@@ -8703,6 +8815,7 @@ input[type="text"] {
       return [
         '<article class="generated-history-card' + (selected ? ' selected' : '') + '" data-history-id="' + escapeHtml(id) + '" title="' + escapeHtml(item.presetName || '') + '">',
         '<label class="generated-history-select"><input type="checkbox" data-history-select="' + escapeHtml(id) + '"' + (selected ? ' checked' : '') + '></label>',
+        '<button class="history-like' + (item.liked === true ? ' liked' : '') + '" type="button" data-history-like="' + escapeHtml(id) + '" title="선호도(하트)">' + (item.liked === true ? '♥' : '♡') + '</button>',
         thumb,
         '</article>'
       ].join('');
@@ -8784,6 +8897,17 @@ input[type="text"] {
     else dialog.setAttribute('open', 'open');
   }
 
+  // 기존 보관 항목(게시물)에 이미지를 추가한다.
+  function appendImageToSavedCombination(entry, image) {
+    if (!entry || !image) return;
+    const current = Array.isArray(entry.images) && entry.images.length
+      ? entry.images
+      : (entry.image ? [entry.image] : []);
+    entry.images = dedupeStrings([...current, image]);
+    if (!entry.image) entry.image = image;
+    entry.updatedAt = nowText();
+  }
+
   function uniqueSavedCombinationTitle(value, artistTags = []) {
     const base = String(value || '').trim() || savedDefaultTitle(artistTags);
     const used = new Set((state.saved.combinations || [])
@@ -8820,14 +8944,7 @@ input[type="text"] {
       ? state.saved.combinations.find(entry => String(entry?.presetKey || entry?.title || '').trim() === presetKey)
       : null;
     if (existing) {
-      if (image) {
-        const currentImages = Array.isArray(existing.images) && existing.images.length
-          ? existing.images
-          : (existing.image ? [existing.image] : []);
-        existing.images = dedupeStrings([...currentImages, image]);
-        if (!existing.image) existing.image = image;
-      }
-      existing.updatedAt = nowText();
+      appendImageToSavedCombination(existing, image);
       try {
         await persistSavedCombinations();
       } catch (error) {
@@ -9431,6 +9548,8 @@ input[type="text"] {
         removeTagFromSection(sectionKey, button.dataset.tag || '');
       } else if (action === 'pin') {
         togglePinnedTag(sectionKey, button.dataset.tag || '');
+      } else if (action === 'weight') {
+        editArtistTagWeight(button.dataset.tag || '');
       }
     });
     $('assemblyGrid')?.addEventListener('keydown', event => {
@@ -9784,6 +9903,13 @@ input[type="text"] {
       updateGeneratedHistorySelectionUi();
     });
     const handleHistoryActionClick = async event => {
+      const likeButton = event.target.closest('[data-history-like]');
+      if (likeButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleHistoryLiked(String(likeButton.dataset.historyLike || ''));
+        return;
+      }
       const galleryTrigger = event.target.closest('[data-history-gallery]');
       if (galleryTrigger) {
         openHistoryGallery(String(galleryTrigger.dataset.historyGallery || ''));
