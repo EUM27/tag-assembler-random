@@ -2266,6 +2266,7 @@ input[type="text"] {
   const SAVED_DB_VERSION = 3;
   const SAVED_STORE_NAME = 'kv';
   const IMPORTED_THUMB_STORE_NAME = 'importedThumbs';
+  const HISTORY_STORE_NAME = 'generatedHistoryItems_v1';
   const SAVED_ITEMS_KEY = 'savedCombinations';
   const SAVED_HANDLE_KEY = 'savedFileHandle';
   const ROOT_DIR_HANDLE_KEY = 'rootDirectoryHandle';
@@ -6492,6 +6493,7 @@ input[type="text"] {
         const db = event.target.result;
         if (!db.objectStoreNames.contains(SAVED_STORE_NAME)) db.createObjectStore(SAVED_STORE_NAME);
         if (!db.objectStoreNames.contains(IMPORTED_THUMB_STORE_NAME)) db.createObjectStore(IMPORTED_THUMB_STORE_NAME);
+        if (!db.objectStoreNames.contains(HISTORY_STORE_NAME)) db.createObjectStore(HISTORY_STORE_NAME);
       };
       request.onblocked = () => {
         reject(new Error('다른 Tag Assembler 탭이 저장소를 잡고 있습니다. 다른 탭을 닫고 새로고침해 주세요.'));
@@ -6505,7 +6507,7 @@ input[type="text"] {
   // (VersionError) 열리도록 현재 버전 그대로 열고, 필요한 스토어가 없을 때만 +1 업그레이드한다.
   async function openSavedDb() {
     let db = await openRawSavedDb();
-    const required = [SAVED_STORE_NAME, IMPORTED_THUMB_STORE_NAME];
+    const required = [SAVED_STORE_NAME, IMPORTED_THUMB_STORE_NAME, HISTORY_STORE_NAME];
     const missing = required.filter(name => !db.objectStoreNames.contains(name));
     if (!missing.length) return db;
     const nextVersion = db.version + 1;
@@ -6530,6 +6532,57 @@ input[type="text"] {
       const request = tx.objectStore(SAVED_STORE_NAME).put(value, key);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error || new Error('저장소 쓰기 실패'));
+    });
+  }
+
+  // 히스토리는 항목별 개별 레코드로 저장한다.
+  // 통짜 배열 저장은 매번 수백 MB를 다시 쓰는 구조라 쓰기 실패/새로고침 중단 시
+  // 히스토리가 통째로 유실됐다(새로고침하면 일부만 남는 증상). 항목별 저장은 그 항목만 영향받는다.
+  async function historyDbGetAll() {
+    const db = await openSavedDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE_NAME, 'readonly');
+      const request = tx.objectStore(HISTORY_STORE_NAME).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error || new Error('히스토리 읽기 실패'));
+    });
+  }
+
+  async function historyDbPutItems(items) {
+    const list = (items || []).filter(item => item && String(item.id || '').trim());
+    if (!list.length) return;
+    const db = await openSavedDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(HISTORY_STORE_NAME);
+      list.forEach(item => store.put(item, String(item.id)));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('히스토리 저장 실패'));
+      tx.onabort = () => reject(tx.error || new Error('히스토리 저장 중단'));
+    });
+  }
+
+  async function historyDbDeleteIds(ids) {
+    const list = [...(ids || [])].map(id => String(id || '').trim()).filter(Boolean);
+    if (!list.length) return;
+    const db = await openSavedDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(HISTORY_STORE_NAME);
+      list.forEach(id => store.delete(id));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('히스토리 삭제 실패'));
+      tx.onabort = () => reject(tx.error || new Error('히스토리 삭제 중단'));
+    });
+  }
+
+  async function historyDbClear() {
+    const db = await openSavedDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(HISTORY_STORE_NAME, 'readwrite');
+      tx.objectStore(HISTORY_STORE_NAME).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('히스토리 초기화 실패'));
     });
   }
 
@@ -8467,7 +8520,12 @@ input[type="text"] {
     let indexed = null;
     let indexedError = '';
     try {
-      indexed = await savedDbGet(GENERATED_HISTORY_STORAGE_KEY);
+      indexed = await historyDbGetAll();
+      // 항목별 저장소가 비어 있으면 구버전(통짜 배열) 수량도 함께 확인한다.
+      if (!Array.isArray(indexed) || !indexed.length) {
+        const legacy = await savedDbGet(GENERATED_HISTORY_STORAGE_KEY);
+        if (Array.isArray(legacy) && legacy.length) indexed = legacy;
+      }
     } catch (error) {
       indexedError = error?.message || String(error || '');
     }
@@ -8505,17 +8563,18 @@ input[type="text"] {
     generatedHistorySelection.clear();
     historyPreviewId = '';
     historyGalleryIndex = 0;
-    await savedDbPut(GENERATED_HISTORY_STORAGE_KEY, []);
+    await historyDbClear();
+    try { await savedDbPut(GENERATED_HISTORY_STORAGE_KEY, []); } catch (_) { /* 구버전 키 정리 실패 무시 */ }
     try { localStorage.removeItem(GENERATED_HISTORY_STORAGE_KEY); } catch (_) { /* 무시 */ }
     renderGeneratedHistory();
     await updateGeneratedHistoryStorageStatus();
     showToast('생성 히스토리 저장소를 초기화했습니다.');
   }
 
-  // 히스토리는 IndexedDB에 저장한다. (localStorage는 5~10MB 한계라 원본 이미지 2~3장이면 저장이 실패했음)
+  // 메모리의 히스토리 전체를 항목별 레코드로 저장한다 (복구/마이그레이션용 전체 동기화).
   async function saveGeneratedHistory() {
     try {
-      await savedDbPut(GENERATED_HISTORY_STORAGE_KEY, generatedHistory);
+      await historyDbPutItems(generatedHistory);
       try { localStorage.removeItem(GENERATED_HISTORY_STORAGE_KEY); } catch (_) { /* 무시 */ }
       updateGeneratedHistoryStorageStatus().catch(error => console.warn('Generated history status refresh failed', error));
     } catch (error) {
@@ -8525,39 +8584,68 @@ input[type="text"] {
     }
   }
 
+  // 히스토리 항목 하나만 저장한다 (하트 토글 등 — 전체를 다시 쓰지 않는다).
+  async function saveGeneratedHistoryItem(item) {
+    try {
+      await historyDbPutItems([item]);
+    } catch (error) {
+      console.warn('Generated history item save failed', error);
+      showToast('히스토리 저장 실패: 브라우저 저장 공간을 확인하세요.');
+    }
+  }
+
   async function loadGeneratedHistory() {
     let items = [];
-    let storedHistory = null;
-    let hasIndexedDbHistory = false;
+    let loadedFromItemStore = false;
+    // 1순위: 항목별 저장소
     try {
-      storedHistory = await savedDbGet(GENERATED_HISTORY_STORAGE_KEY);
-      hasIndexedDbHistory = Array.isArray(storedHistory);
-      items = hasIndexedDbHistory ? storedHistory : [];
-    } catch (error) {
-      console.warn('Generated history IndexedDB load failed', error);
-      items = [];
-    }
-    if (!hasIndexedDbHistory) {
-      // 구버전 localStorage 데이터 마이그레이션
-      try {
-        const raw = JSON.parse(localStorage.getItem(GENERATED_HISTORY_STORAGE_KEY) || '[]');
-        if (Array.isArray(raw) && raw.length) {
-          items = raw;
-          try {
-            await savedDbPut(GENERATED_HISTORY_STORAGE_KEY, items);
-            localStorage.removeItem(GENERATED_HISTORY_STORAGE_KEY);
-          } catch (error) {
-            console.warn('Generated history migration failed', error);
-          }
-        }
-      } catch (error) {
-        console.warn('Generated history legacy load failed', error);
+      const stored = await historyDbGetAll();
+      if (Array.isArray(stored) && stored.length) {
+        items = stored;
+        loadedFromItemStore = true;
       }
-    } else {
-      // IndexedDB가 살아있으면 localStorage 사본은 정리해 용량을 확보한다.
-      try { localStorage.removeItem(GENERATED_HISTORY_STORAGE_KEY); } catch (_) { /* 무시 */ }
+    } catch (error) {
+      console.warn('Generated history item-store load failed', error);
+    }
+    // 2순위: 구버전(통짜 배열 kv) → 항목별 저장소로 마이그레이션
+    if (!loadedFromItemStore) {
+      try {
+        const legacy = await savedDbGet(GENERATED_HISTORY_STORAGE_KEY);
+        if (Array.isArray(legacy) && legacy.length) items = legacy;
+      } catch (error) {
+        console.warn('Generated history legacy kv load failed', error);
+      }
+      // 3순위: 더 구버전 localStorage
+      if (!items.length) {
+        try {
+          const raw = JSON.parse(localStorage.getItem(GENERATED_HISTORY_STORAGE_KEY) || '[]');
+          if (Array.isArray(raw) && raw.length) items = raw;
+        } catch (error) {
+          console.warn('Generated history legacy load failed', error);
+        }
+      }
+      if (items.length) {
+        // 배열 순서(최신순)를 seq로 보존한 뒤 항목별 저장소에 기록
+        const base = Date.now();
+        items.forEach((item, index) => {
+          if (item && typeof item === 'object' && !Number(item.seq)) item.seq = base - index;
+        });
+        try {
+          await historyDbPutItems(items);
+          // 마이그레이션 성공 후에만 구버전 데이터를 정리한다.
+          try { await savedDbPut(GENERATED_HISTORY_STORAGE_KEY, []); } catch (_) { /* 무시 */ }
+          try { localStorage.removeItem(GENERATED_HISTORY_STORAGE_KEY); } catch (_) { /* 무시 */ }
+        } catch (error) {
+          console.warn('Generated history migration failed', error);
+        }
+      }
     }
     generatedHistory = (Array.isArray(items) ? items : []).filter(item => item && typeof item === 'object');
+    // seq(최신순) 정렬. seq 없는 항목은 뒤로.
+    generatedHistory.forEach((item, index) => {
+      if (!Number(item.seq)) item.seq = 0 - index;
+    });
+    generatedHistory.sort((left, right) => Number(right.seq || 0) - Number(left.seq || 0));
     updateGeneratedHistoryStorageStatus().catch(error => console.warn('Generated history status refresh failed', error));
   }
 
@@ -8593,8 +8681,22 @@ input[type="text"] {
   }
 
   async function saveGeneratedHistoryEntry(entry) {
-    generatedHistory = [entry, ...generatedHistory].slice(0, 1000);
-    await saveGeneratedHistory();
+    if (entry && typeof entry === 'object' && !Number(entry.seq)) entry.seq = Date.now();
+    const combined = [entry, ...generatedHistory];
+    generatedHistory = combined.slice(0, 1000);
+    const overflow = combined.slice(1000);
+    try {
+      // 새 항목 하나만 기록한다. (전체 재기록 금지 — 유실 원인이었음)
+      await historyDbPutItems([entry]);
+      updateGeneratedHistoryStorageStatus().catch(error => console.warn('Generated history status refresh failed', error));
+    } catch (error) {
+      console.warn('Generated history entry save failed', error);
+      showToast('히스토리 저장 실패: 브라우저 저장 공간을 확인하세요.');
+      throw error;
+    }
+    if (overflow.length) {
+      historyDbDeleteIds(overflow.map(item => String(item?.id || ''))).catch(error => console.warn('History trim failed', error));
+    }
     renderGeneratedHistory();
   }
 
@@ -8627,7 +8729,7 @@ input[type="text"] {
     const item = generatedHistory.find(entry => String(entry.id || '') === String(id || ''));
     if (!item) return;
     item.liked = item.liked !== true;
-    saveGeneratedHistory().catch(error => console.warn('History like save failed', error));
+    saveGeneratedHistoryItem(item);
     document.querySelectorAll(`[data-history-like="${CSS.escape(String(id))}"]`).forEach(button => {
       button.classList.toggle('liked', item.liked === true);
       button.textContent = item.liked === true ? '♥' : '♡';
@@ -9135,7 +9237,9 @@ input[type="text"] {
     const removedItems = generatedHistory.filter(item => removal.has(String(item.id || '')));
     generatedHistory = generatedHistory.filter(item => !removal.has(String(item.id || '')));
     removal.forEach(id => generatedHistorySelection.delete(id));
-    await saveGeneratedHistory();
+    // 삭제 대상 레코드만 지운다 (전체 재기록 금지).
+    await historyDbDeleteIds([...removal]);
+    updateGeneratedHistoryStorageStatus().catch(error => console.warn('Generated history status refresh failed', error));
     let filesDeleted = 0;
     let fileDeleteError = null;
     if (options.deleteSavedFiles === true) {
